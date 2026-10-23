@@ -1,9 +1,9 @@
 <idea-plugin>
     <id>dev.ideamcp.symbols</id>
     <name>Java Symbol MCP</name>
-    <version>0.2.1</version>
+    <version>0.4.0</version>
     <vendor>IDEA MCP</vendor>
-    <description><![CDATA[Read Java symbols, resolve definitions and references, and restart existing local service configurations in Run or Debug mode through a local MCP endpoint.]]></description>
+    <description><![CDATA[Read Java symbols, definitions, references, call sites, IDEA diagnostics and captured runtime logs, and restart existing local service configurations in Run or Debug mode through a local MCP endpoint.]]></description>
     <idea-version since-build="252" until-build="252.*"/>
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.java</depends>

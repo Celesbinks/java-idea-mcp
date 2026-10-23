@@ -9,6 +9,8 @@ import org.jetbrains.annotations.NotNull;
 public final class IdeaMcpStartup implements StartupActivity, DumbAware {
     @Override public void runActivity(@NotNull Project project) {
         if (ApplicationManager.getApplication().isUnitTestMode()) return;
+        RunLogService logs = project.getService(RunLogService.class);
+        ApplicationManager.getApplication().invokeLater(() -> { if (!project.isDisposed()) logs.discover(); });
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             if (project.isDisposed() || ApplicationManager.getApplication().isDisposed()) return;
             try { IdeaMcpService.getInstance().autoStart(); }

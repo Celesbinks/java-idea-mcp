@@ -45,6 +45,9 @@ public final class RunControlServiceTest extends JavaCodeInsightFixtureTestCase 
     }
     @Override protected void setUp() throws Exception {
         super.setUp();
+        // The optional Run console profiler attaches a monitor to short-lived JVMs;
+        // it is unrelated to execution/debugger behavior and can outlive fixture teardown.
+        com.intellij.openapi.util.registry.Registry.get("profiler.widget.in.run.console").setValue(false, getTestRootDisposable());
         // Heavy Java fixtures label their SDK as Java 5 even when addJdk points
         // at a real JDK. Execution needs accurate metadata as well as real roots.
         WriteAction.run(() -> {
@@ -55,6 +58,7 @@ public final class RunControlServiceTest extends JavaCodeInsightFixtureTestCase 
             modifier.commitChanges();
         });
         service = getProject().getService(RunControlService.class);
+        getProject().getService(RunLogService.class);
         getProject().getMessageBus().connect(getTestRootDisposable()).subscribe(ExecutionManager.EXECUTION_TOPIC, new ExecutionListener() {
             @Override public void processStarting(String executorId, ExecutionEnvironment env, ProcessHandler handler) {
                 observedHandlers.add(handler);
@@ -76,7 +80,7 @@ public final class RunControlServiceTest extends JavaCodeInsightFixtureTestCase 
             }
             for (ProcessHandler handler : processes) if (!handler.isProcessTerminating() && !handler.isProcessTerminated()) ExecutionManagerImpl.stopProcess(handler);
             PlatformTestUtil.waitWithEventsDispatching("Test JVMs did not stop", () -> processes.stream().allMatch(handler -> handler.isProcessTerminated()
-                    && (!(handler instanceof BaseProcessHandler<?> nativeHandler) || !nativeHandler.getProcess().isAlive())), 15000);
+                    && (!(handler instanceof BaseProcessHandler<?> nativeHandler) || !nativeHandler.getProcess().isAlive())), 15);
         } finally { super.tearDown(); }
     }
     public void testListsExactIdsAndRejectsUnknownConfiguration() {
@@ -103,6 +107,9 @@ public final class RunControlServiceTest extends JavaCodeInsightFixtureTestCase 
         assertEquals(run + "\n" + probeOutput, "started", run.get("phase").getAsString());
         assertFalse(run.get("debuggerAttached").getAsBoolean());
         long initialPid = run.getAsJsonObject("process").get("pid").getAsLong();
+        RunLogService logs = getProject().getService(RunLogService.class);
+        PlatformTestUtil.waitWithEventsDispatching("Disposable JVM stdout was not captured", () -> RunLogBufferTest.text(logs.snapshot(object("configurationId", settings.getUniqueID(), "cursor", "0"))).contains("MCP test service started"), 10);
+        String initialLogSession = logs.snapshot(object("configurationId", settings.getUniqueID())).get("sessionId").getAsString();
 
         JsonObject debug = await(restart(settings, "debug"));
         assertEquals(debug + "\n" + probeOutput, "started", debug.get("phase").getAsString());
@@ -110,6 +117,7 @@ public final class RunControlServiceTest extends JavaCodeInsightFixtureTestCase 
         assertEquals(1, debug.get("stoppedProcessCount").getAsInt());
         assertTrue(debug.toString(), debug.get("debuggerAttached").getAsBoolean());
         assertFalse(ProcessHandle.of(initialPid).map(ProcessHandle::isAlive).orElse(false));
+        assertTrue(logs.snapshot(object("configurationId", settings.getUniqueID(), "sessionId", initialLogSession)).get("terminated").getAsBoolean());
         long debugPid = debug.getAsJsonObject("process").get("pid").getAsLong();
 
         JsonObject preserved = await(restart(settings, "preserve"));
@@ -171,7 +179,7 @@ public final class RunControlServiceTest extends JavaCodeInsightFixtureTestCase 
         ExtensionTestUtil.maskExtensions(ProgramRunner.PROGRAM_RUNNER_EP, List.of(runner), getTestRootDisposable());
         JsonObject submitted = service.call("restart_run_configuration", object("configurationId", settings.getUniqueID(), "mode", "run", "startTimeoutSeconds", 1));
         String id = submitted.get("operationId").getAsString();
-        PlatformTestUtil.waitWithEventsDispatching("No start timeout", () -> service.call("get_run_operation", object("operationId", id)).get("phase").getAsString().equals("start_timeout"), 10000);
+        PlatformTestUtil.waitWithEventsDispatching("No start timeout", () -> service.call("get_run_operation", object("operationId", id)).get("phase").getAsString().equals("start_timeout"), 10);
         JsonObject pending = service.call("get_run_operation", object("operationId", id));
         assertTrue(pending.get("inProgress").getAsBoolean());
         assertEquals(submitted.get("operationId"), restart(settings, "run").get("operationId"));
@@ -253,7 +261,7 @@ public final class RunControlServiceTest extends JavaCodeInsightFixtureTestCase 
     private JsonObject await(JsonObject submitted) {
         String id = submitted.get("operationId").getAsString();
         PlatformTestUtil.waitWithEventsDispatching(() -> "Operation did not complete: " + service.call("get_run_operation", object("operationId", id)),
-                () -> !service.call("get_run_operation", object("operationId", id)).get("inProgress").getAsBoolean(), 45000);
+                () -> !service.call("get_run_operation", object("operationId", id)).get("inProgress").getAsBoolean(), 45);
         return service.call("get_run_operation", object("operationId", id));
     }
 }

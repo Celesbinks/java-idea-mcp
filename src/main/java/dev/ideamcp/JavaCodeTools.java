@@ -22,6 +22,7 @@ import static dev.ideamcp.protocol.Json.object;
 public final class JavaCodeTools {
     public JsonObject call(String name, JsonObject args) throws Exception {
         if (name.equals("list_projects")) return read(null, this::projects);
+        if (name.equals("get_diagnostics")) return DiagnosticsTools.call(args);
         return read(null, () -> {
             Project project = selectProject(Arguments.string(args, "project", null));
             if (project.isDisposed()) throw new IllegalArgumentException("PROJECT_CLOSED: project has closed");
@@ -32,22 +33,27 @@ public final class JavaCodeTools {
                 case "read_symbols" -> symbols(project, args);
                 case "find_definition" -> definitions(project, args);
                 case "find_references" -> references(project, args);
+                case "find_callers" -> JavaCallTools.calls(project, args, true);
+                case "find_callees" -> JavaCallTools.calls(project, args, false);
                 default -> throw new IllegalArgumentException("Unknown tool: " + name);
             };
         });
     }
 
-    private static JsonObject read(Project project, Supplier<JsonObject> action) throws Exception {
+    static <T> T read(Project project, Supplier<T> action) throws Exception {
+        return read(project, action, TimeUnit.SECONDS.toNanos(20));
+    }
+    static <T> T read(Project project, Supplier<T> action, long timeoutNanos) throws Exception {
         // Expected query failures must not become rejected IDE promises: those are logged as
         // platform errors (and fail the IDE test harness). Transport reports these as tool errors.
         var read = ReadAction.nonBlocking(() -> {
-            try { return new ReadResult(action.get(), null); }
-            catch (IllegalArgumentException e) { return new ReadResult(null, e); }
+            try { return new ReadResult<T>(action.get(), null); }
+            catch (IllegalArgumentException e) { return new ReadResult<T>(null, e); }
         });
         if (project != null) read = read.expireWith(project);
         var promise = read.submit(AppExecutorUtil.getAppExecutorService());
         try {
-            ReadResult result = promise.get(20, TimeUnit.SECONDS);
+            ReadResult<T> result = promise.get(Math.max(1, timeoutNanos), TimeUnit.NANOSECONDS);
             if (result.error() != null) throw result.error();
             return result.value();
         }
@@ -58,7 +64,7 @@ public final class JavaCodeTools {
             throw e;
         }
     }
-    private record ReadResult(JsonObject value, IllegalArgumentException error) {}
+    private record ReadResult<T>(T value, IllegalArgumentException error) {}
     private JsonObject projects() {
         JsonArray result = new JsonArray();
         for (Project project : ProjectManager.getInstance().getOpenProjects()) {
@@ -76,7 +82,7 @@ public final class JavaCodeTools {
         return projects.stream().filter(p -> Path.of(p.getBasePath()).toAbsolutePath().normalize().equals(target)).findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("PROJECT_NOT_FOUND: use an exact path from list_projects"));
     }
-    private PsiJavaFile file(Project project, String path) {
+    static PsiJavaFile file(Project project, String path) {
         Path target = Path.of(path);
         if (!target.isAbsolute()) target = Path.of(Objects.requireNonNull(project.getBasePath())).resolve(target);
         VirtualFile virtualFile = LocalFileSystem.getInstance().findFileByNioFile(target.normalize());
@@ -126,7 +132,7 @@ public final class JavaCodeTools {
         result.addProperty("candidateLimitReached", matches.size() > 10000);
         return result;
     }
-    private List<PsiElement> targets(Project project, JsonObject args) {
+    static List<PsiElement> targets(Project project, JsonObject args) {
         PsiJavaFile file = file(project, Arguments.required(args, "file"));
         Document document = PsiDocumentManager.getInstance(project).getDocument(file);
         if (document == null) throw new IllegalArgumentException("NO_DOCUMENT: file has no source document");
@@ -199,7 +205,7 @@ public final class JavaCodeTools {
         VirtualFile vf = file == null ? null : file.getVirtualFile();
         return (vf == null ? "" : vf.getUrl()) + ":" + element.getTextOffset() + ":" + element;
     }
-    private static JsonObject symbol(PsiElement element) {
+    static JsonObject symbol(PsiElement element) {
         String kind = "symbol", qualified = null, signature = element.toString();
         String name = element instanceof PsiNamedElement named ? named.getName() : element.getText();
         if (element instanceof PsiClass cls) {
@@ -230,7 +236,7 @@ public final class JavaCodeTools {
         if (element instanceof PsiNameIdentifierOwner owner && owner.getNameIdentifier() != null) return owner.getNameIdentifier().getTextRange();
         return element.getTextRange();
     }
-    private static JsonObject location(PsiElement element, TextRange range) {
+    static JsonObject location(PsiElement element, TextRange range) {
         PsiFile file = element.getContainingFile();
         if (file == null || file.getVirtualFile() == null || range == null) return null;
         Document document = PsiDocumentManager.getInstance(element.getProject()).getDocument(file);

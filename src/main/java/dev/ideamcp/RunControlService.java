@@ -51,12 +51,15 @@ public final class RunControlService implements Disposable {
         String filter = Arguments.string(args, "name", "").toLowerCase(Locale.ROOT);
         JsonArray configurations = new JsonArray();
         RunManager manager = RunManager.getInstance(project);
+        RunLogService logs = project.getService(RunLogService.class);
+        logs.discover();
         for (RunnerAndConfigurationSettings settings : manager.getAllSettings()) {
             if (!settings.getName().toLowerCase(Locale.ROOT).contains(filter)) continue;
             JsonArray sessions = new JsonArray();
             for (RunContentDescriptor descriptor : running(settings)) {
                 JsonObject session = process(descriptor.getProcessHandler());
                 session.addProperty("executionId", descriptor.getExecutionId());
+                session.addProperty("logSessionId", logs.attach(settings.getUniqueID(), settings.getName(), descriptor.getProcessHandler(), descriptor.getExecutionId()));
                 session.add("modes", dev.ideamcp.protocol.Json.GSON.toJsonTree(modes(descriptor)));
                 sessions.add(session);
             }
@@ -69,7 +72,7 @@ public final class RunControlService implements Disposable {
                     "sessions", sessions, "activeOperationId", operation == null ? null : operation.id);
             configurations.add(item);
         }
-        return object("project", project.getBasePath(), "configurations", configurations);
+        return object("project", project.getBasePath(), "configurations", configurations, "logSessions", logs.retained());
     }
     private JsonObject restart(JsonObject args) {
         String id = Arguments.required(args, "configurationId");

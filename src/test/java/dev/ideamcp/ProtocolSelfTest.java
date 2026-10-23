@@ -25,7 +25,7 @@ public final class ProtocolSelfTest {
         initialized = handler.handle(request(1, "initialize", object("protocolVersion", "2099-01-01")));
         check(initialized.getAsJsonObject("result").get("protocolVersion").getAsString().equals("2025-11-25"), "unsupported version fallback");
         for (String version : RpcHandler.VERSIONS) check(handler.handle(request(1, "initialize", object("protocolVersion", version))).getAsJsonObject("result").get("protocolVersion").getAsString().equals(version), "supported version " + version);
-        check(handler.handle(request(2, "tools/list", object())).getAsJsonObject("result").getAsJsonArray("tools").size() == 7, "tool discovery");
+        check(handler.handle(request(2, "tools/list", object())).getAsJsonObject("result").getAsJsonArray("tools").size() == 19, "tool discovery");
         JsonObject restartTool = null;
         for (JsonElement tool : ToolCatalog.tools()) if (tool.getAsJsonObject().get("name").getAsString().equals("restart_run_configuration")) restartTool = tool.getAsJsonObject();
         check(restartTool != null && !restartTool.getAsJsonObject("annotations").get("readOnlyHint").getAsBoolean(), "restart is advertised as a mutation");
@@ -52,6 +52,44 @@ public final class ProtocolSelfTest {
             check(response.getAsJsonObject("result").get("isError").getAsBoolean(), "invalid restart input rejected");
         }
         check(invocations.get() == before, "invalid restart input never reaches execution backend");
+        for (String readTool : new String[]{"get_diagnostics", "find_callers", "find_callees", "read_run_logs", "list_debug_sessions", "read_debug_threads", "read_debug_stack", "read_debug_variables", "list_breakpoints"}) {
+            JsonObject metadata = null;
+            for (JsonElement item : ToolCatalog.tools()) if (item.getAsJsonObject().get("name").getAsString().equals(readTool)) metadata = item.getAsJsonObject();
+            check(metadata != null && metadata.getAsJsonObject("annotations").get("readOnlyHint").getAsBoolean(), readTool + " is read-only");
+            check(!metadata.getAsJsonObject("annotations").get("destructiveHint").getAsBoolean(), readTool + " is non-destructive");
+        }
+        for (Object[] invalid : new Object[][]{
+                {"get_diagnostics", object()}, {"get_diagnostics", object("file", "A.java", "severity", "info")},
+                {"find_callers", object("file", "A.java", "line", 0, "column", 1)}, {"find_callees", object("file", "A.java", "line", 1, "column", 1, "includeDeclaration", true)},
+                {"read_run_logs", object()}, {"read_run_logs", object("configurationId", "cfg", "cursor", 1)},
+                {"read_run_logs", object("configurationId", "cfg", "maxChars", 1)}, {"read_run_logs", object("configurationId", "cfg", "maxChars", 20001)}}) {
+            JsonObject response = handler.handle(request(1, "tools/call", object("name", invalid[0], "arguments", invalid[1])));
+            check(response.getAsJsonObject("result").get("isError").getAsBoolean(), "invalid " + invalid[0] + " input rejected");
+        }
+        check(invocations.get() == before, "invalid 0.3 inputs never reach backend");
+        for (JsonElement item : ToolCatalog.tools()) {
+            JsonObject tool=item.getAsJsonObject();String toolName=tool.get("name").getAsString();
+            if (!java.util.Set.of("control_debugger","set_breakpoint","remove_breakpoint").contains(toolName)) continue;
+            JsonObject annotations=tool.getAsJsonObject("annotations");
+            check(!annotations.get("readOnlyHint").getAsBoolean(),toolName+" mutates debugger state");
+            check(annotations.get("destructiveHint").getAsBoolean(),toolName+" can disrupt debug execution");
+            check(!annotations.get("idempotentHint").getAsBoolean(),toolName+" must not be retried blindly");
+        }
+        for(Object[] invalid:new Object[][]{
+                {"read_debug_threads",object("sessionId","s")},
+                {"read_debug_stack",object("sessionId","s","pauseId","p")},
+                {"read_debug_variables",object("sessionId","s","pauseId","p","threadId","t","frameIndex",-1)},
+                {"read_debug_variables",object("sessionId","s","pauseId","p","threadId","t","maxStringLength",1001)},
+                {"control_debugger",object("sessionId","s","action","stop")},
+                {"control_debugger",object("sessionId","s","action","resume")},
+                {"control_debugger",object("sessionId","s","action","pause","pauseId","p")},
+                {"set_breakpoint",object("file","A.java","line",0)},
+                {"set_breakpoint",object("file","A.java","line",1,"condition","run()")},
+                {"remove_breakpoint",object()}}){
+            JsonObject response=handler.handle(request(1,"tools/call",object("name",invalid[0],"arguments",invalid[1])));
+            check(response.getAsJsonObject("result").get("isError").getAsBoolean(),"invalid "+invalid[0]+" input rejected");
+        }
+        check(invocations.get()==before,"invalid 0.4 inputs never reach debugger backend");
         JsonObject failure = handler.handle(request(4, "tools/call", object("name", "read_symbols", "arguments", object("file", "A.java", "project", "missing"))));
         check(failure.getAsJsonObject("result").get("isError").getAsBoolean(), "backend errors are MCP tool errors");
         try (McpHttpServer server = new McpHttpServer(0, TOKEN, handler); HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {

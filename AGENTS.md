@@ -5,7 +5,7 @@
 ## 项目与技术栈
 
 - Java Symbol MCP 是 IntelliJ IDEA 插件，复用正在运行的 IDE 的 Java PSI、项目索引和 Execution API。
-- 当前版本 `0.2.1`；目标为 IDEA `2025.2` / `252.*`，Java 21。
+- 当前版本 `0.4.0`；目标为 IDEA `2025.2` / `252.*`，Java 21。
 - 使用 Gradle 9.0.0 Wrapper、IntelliJ Platform Gradle Plugin 2.18.1、JUnit 4。
 - 插件 ID：`dev.ideamcp.symbols`；显示名称：`Java Symbol MCP`。
 - 本机 MCP 地址默认为 `http://127.0.0.1:64123/mcp`，使用 Bearer 认证。
@@ -18,7 +18,10 @@
 | `IdeaMcpStartup.java` / `IdeaMcpService.java` | 后台启动、应用级 HTTP 生命周期、连接配置与令牌更新 |
 | `IdeaToolBackend.java` | 路由代码查询与 EDT 运行控制请求 |
 | `JavaCodeTools.java` | Java 符号、定义、引用、项目选择和位置转换 |
+| `JavaCallTools.java` / `DiagnosticsTools.java` | 单层静态调用位置、精确重载和后台单文件错误/警告分析 |
 | `RunControlService.java` | 项目级运行配置查询、异步重启状态机和执行事件跟踪 |
+| `RunLogService.java` / `RunLogBuffer.java` | 项目内执行事件、实例隔离、有界 stdout/stderr 缓冲与游标 |
+| `DebugService.java` | EDT 调试会话与断点协调、调试器管理线程上的 JDI 现场读取、暂停令牌和单步控制 |
 | `TokenStore.java` / `*Action.java` | PasswordSafe 凭据与 IDEA 菜单操作 |
 | `src/main/java/dev/ideamcp/protocol/` | HTTP、JSON-RPC、参数校验、工具 schema 与响应 |
 | `src/main/resources/META-INF/plugin.xml` | 插件声明、兼容范围、启动扩展和菜单注册 |
@@ -37,6 +40,7 @@
 - 读取已提交到 PSI 的编辑内容，不强制保存用户文件；索引中和文档未提交时返回可重试错误。
 - 公共位置是从 1 开始的行号和 UTF-16 列号，范围终点右开。覆盖空行、越界和 emoji。
 - 文件查询限于所选项目的内容根；项目目录外的模块内容根仍有效。
+- 调用关系为静态单层解析；不要将 Lambda、方法引用或接口声明描述为已执行或运行时实现。诊断使用 IDEA 检查配置，不触发编译、构建或快速修复；源码变化时拒绝混合结果。
 - RunManager、Execution API 和运行状态转换遵循 EDT 调度。HTTP 线程只等待短期提交或查询结果，不等待整个构建过程。
 - PasswordSafe 在后台访问。生命周期锁不能覆盖可能阻塞或弹窗的凭据操作，避免关闭 IDEA 或卸载插件时死锁。
 
@@ -64,6 +68,10 @@
 - Debug 连接成功以 `debuggerAttached=true` 为准，不能仅依靠模式或 `started`。
 - 进程启动成功不能描述为 Spring Boot 已就绪或业务健康检查通过。
 - 插件卸载和状态跟踪清理不额外终止业务进程。
+- 日志按运行实例隔离并限制缓冲容量；只捕获监听以后产生的 stdout/stderr，排除系统/启动命令行输出，不回填旧控制台或读取磁盘日志。不要在测试报告中记录真实业务日志。
+- 调试控制和断点变更须有用户明确要求，使用所选项目的精确 sessionId / breakpointId。断点在项目内共享，移除或设置时不要影响其他断点。控制命令返回 accepted 仅表示已提交，后续查询会话状态。
+- 栈和变量必须带当前 pauseId；继续、单步、退出或再次暂停后拒绝旧令牌。JDI 读取安排在 IDEA 调试器管理线程，禁止在 EDT 等待 VM 响应。
+- 局部变量只读取 JDI 原始值，不求值、不调用 getter / toString、不写变量、不展开对象。不要将真实调试变量或业务快照写入测试报告。服务卸载不恢复或停止调试进程，也不删除用户断点。
 
 ## 构建和验证
 
@@ -92,8 +100,11 @@
 | --- | --- |
 | 协议、schema、认证、HTTP | `ProtocolTest` / `ProtocolSelfTest`：非法输入、请求边界、工具元数据 |
 | Java 符号与位置 | `JavaCodeToolsTest` / `ReferencePaginationTest`：重载、语义引用、UTF-16、未保存内容和跨页完整性 |
+| 调用链与诊断 | `JavaCallToolsTest` / `DiagnosticsToolsTest`：重载、构造器、Lambda、方法引用、调用分页、错误/警告及未保存修复 |
+| 日志 | `RunLogBufferTest` / `RunLogServiceTest`：游标、截断、UTF-16、标准输出类型、实例隔离、淘汰和监听清理 |
 | 令牌和生命周期 | `TokenPersistenceTest`：重建复用、令牌失效、保存失败、并发退出 |
 | 运行控制 | `RunControlServiceTest`：真实临时 JVM 的 Run / Debug、超时和事件隔离 |
+| 调试现场与断点 | `DebugServiceTest` / `DebugValueTest`：两台临时 JVM 的会话隔离、暂停令牌、线程/栈/局部变量、三种单步、继续/暂停、断点增删和无求值渲染 |
 | 发布包和兼容范围 | `buildPlugin verifyPluginStructure`，按需要补充兼容验证 |
 | 仅文档 | 核对工具、版本、命令、默认值和链接；不必重跑完整集成测试或启动业务服务 |
 

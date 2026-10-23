@@ -42,8 +42,8 @@ public final class RpcHandler {
         String requested = Arguments.required(params, "protocolVersion");
         String version = VERSIONS.contains(requested) ? requested : "2025-11-25";
         return object("protocolVersion", version, "capabilities", object("tools", object("listChanged", false)),
-                "serverInfo", object("name", "idea-symbol-mcp", "version", "0.2.1"),
-                "instructions", "Use list_projects first. Positions are 1-based UTF-16. Queries use current committed editor contents. Retry INDEXING or DOCUMENTS_UNCOMMITTED errors after IDEA settles. For service restart/debug, list_run_configurations first, restart only the user-requested exact configuration ID, and poll get_run_operation until completion. A started process is not a health check.");
+                "serverInfo", object("name", "idea-symbol-mcp", "version", "0.4.0"),
+                "instructions", "Use list_projects first. Positions are 1-based UTF-16. Queries use current committed editor contents. Retry INDEXING or DOCUMENTS_UNCOMMITTED errors after IDEA settles. For service startup/restart, list_run_configurations first, restart only the user-requested exact configuration ID, and poll get_run_operation until completion. A started process is not a health check. For debugger inspection, list_debug_sessions first and use its exact sessionId and current pauseId. Debug controls and breakpoint changes require the user's explicit request; poll sessions after control acceptance and never reuse an old pauseId.");
     }
 
     private JsonObject call(JsonObject params) {
@@ -84,6 +84,11 @@ public final class RpcHandler {
             }
             for (JsonElement key : schema.getAsJsonArray("required")) if (!args.has(key.getAsString())) throw new IllegalArgumentException("Missing " + key.getAsString());
             if (name.equals("read_symbols") && args.has("file") == args.has("query")) throw new IllegalArgumentException("Supply exactly one of file/query");
+            if (name.equals("control_debugger")) {
+                if (Arguments.required(args,"action").equals("pause")) {
+                    if (args.has("pauseId")) throw new IllegalArgumentException("pauseId must be omitted for pause");
+                } else Arguments.required(args,"pauseId");
+            }
         }
     }
     private static JsonObject result(JsonObject data, boolean error) {

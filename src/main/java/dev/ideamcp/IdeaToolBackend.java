@@ -9,14 +9,16 @@ import java.util.concurrent.*;
 
 /** Routes code reads to background read actions and execution operations to the IDE UI thread. */
 final class IdeaToolBackend implements RpcHandler.Backend {
-    private static final Set<String> RUN_TOOLS = Set.of("list_run_configurations", "restart_run_configuration", "get_run_operation");
+    private static final Set<String> RUN_TOOLS = Set.of("list_run_configurations", "restart_run_configuration", "get_run_operation", "read_run_logs");
     private final JavaCodeTools code = new JavaCodeTools();
     @Override public JsonObject call(String name, JsonObject arguments) throws Exception {
+        if (DebugService.NAMES.contains(name)) return DebugService.invoke(name, arguments);
         if (!RUN_TOOLS.contains(name)) return code.call(name, arguments);
         var app = ApplicationManager.getApplication();
         Callable<JsonObject> action = () -> {
             var project = JavaCodeTools.selectProject(Arguments.string(arguments, "project", null));
             if (project.isDisposed()) throw new IllegalArgumentException("PROJECT_CLOSED");
+            if (name.equals("read_run_logs")) return project.getService(RunLogService.class).read(arguments);
             return project.getService(RunControlService.class).call(name, arguments);
         };
         if (app.isDispatchThread()) return action.call();
