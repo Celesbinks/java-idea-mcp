@@ -1,0 +1,113 @@
+# 项目协作说明
+
+适用于当前项目及其全部子目录。面向在此开发、修复或维护文档的编码代理；用户在当前任务中的明确要求优先。
+
+## 项目与技术栈
+
+- Java Symbol MCP 是 IntelliJ IDEA 插件，复用正在运行的 IDE 的 Java PSI、项目索引和 Execution API。
+- 当前版本 `0.2.0`；目标为 IDEA `2025.2` / `252.*`，Java 21。
+- 使用 Gradle 9.0.0 Wrapper、IntelliJ Platform Gradle Plugin 2.18.1、JUnit 4。
+- 插件 ID：`dev.ideamcp.symbols`；显示名称：`Java Symbol MCP`。
+- 本机 MCP 地址默认为 `http://127.0.0.1:64123/mcp`，使用 Bearer 认证。
+- 工具名称、schema、默认值以 [ToolCatalog.java](src/main/java/dev/ideamcp/protocol/ToolCatalog.java) 为准；使用说明见 [README.md](README.md)。
+
+## 代码地图
+
+| 文件或目录 | 职责 |
+| --- | --- |
+| `IdeaMcpStartup.java` / `IdeaMcpService.java` | 后台启动、应用级 HTTP 生命周期、连接配置与令牌更新 |
+| `IdeaToolBackend.java` | 路由代码查询与 EDT 运行控制请求 |
+| `JavaCodeTools.java` | Java 符号、定义、引用、项目选择和位置转换 |
+| `RunControlService.java` | 项目级运行配置查询、异步重启状态机和执行事件跟踪 |
+| `TokenStore.java` / `*Action.java` | PasswordSafe 凭据与 IDEA 菜单操作 |
+| `src/main/java/dev/ideamcp/protocol/` | HTTP、JSON-RPC、参数校验、工具 schema 与响应 |
+| `src/main/resources/META-INF/plugin.xml` | 插件声明、兼容范围、启动扩展和菜单注册 |
+| `src/test/java/dev/ideamcp/` | 协议、Java PSI、令牌及 Run / Debug 测试 |
+| `scripts/` | 本地编译打包和已安装服务的只读连接自检 |
+| `examples/java/demo/Sample.java` | 可复现的位置查询示例 |
+
+表中未标目录的 Java 文件位于 `src/main/java/dev/ideamcp/`。
+
+## 实现约束
+
+### Java 分析和线程
+
+- 用 PSI 和 IDEA 索引提供语义结果；符号解析和引用查找不能退化为正则或全文搜索。
+- 保持后台非阻塞读操作、取消机制、写操作优先和当前 20 秒查询等待上限。
+- 读取已提交到 PSI 的编辑内容，不强制保存用户文件；索引中和文档未提交时返回可重试错误。
+- 公共位置是从 1 开始的行号和 UTF-16 列号，范围终点右开。覆盖空行、越界和 emoji。
+- 文件查询限于所选项目的内容根；项目目录外的模块内容根仍有效。
+- RunManager、Execution API 和运行状态转换遵循 EDT 调度。HTTP 线程只等待短期提交或查询结果，不等待整个构建过程。
+- PasswordSafe 在后台访问。生命周期锁不能覆盖可能阻塞或弹窗的凭据操作，避免关闭 IDEA 或卸载插件时死锁。
+
+### MCP 和凭据
+
+- schema、运行时校验和实现保持一致；拒绝未知参数、错误类型和越界值。
+- 区分 JSON-RPC 错误、MCP 工具错误和异步操作失败；异步任务还要检查 `phase` / `error`。
+- 保持回环地址绑定、Host / Origin 校验、Bearer 认证、严格 JSON 和 1 MiB 请求体限制。
+- 当前支持 `2025-03-26`、`2025-06-18`、`2025-11-25` 协议的无会话 JSON 响应子集；GET / DELETE 返回 405。协议扩展需同步测试和文档。
+- 令牌保存在 PasswordSafe。禁止把真实令牌、认证头、用户环境变量或完整启动参数写入源码、日志、测试夹具和文档。
+- 保持现有凭据服务名称；若任务涉及变更，提供迁移方案，避免丢失已有固定令牌。
+- 保存失败或已有令牌损坏时，不静默切换临时令牌；内存模式不能宣称可跨 IDE 重启持久化。
+- 重启工具的元数据保持 `readOnlyHint=false`、`destructiveHint=true`、`idempotentHint=false`。
+
+### Run / Debug 控制
+
+- 真实业务服务仅在用户要求启动、重启或切换模式时操作。配置、状态和代码查询属于只读工作。
+- 先列出项目和运行配置，使用返回的精确配置 ID；多项目时指定完整路径。
+- 通过 IDEA 既有运行配置和执行器操作，保留参数、环境和 Before launch 任务。不要改用自行拼接的 shell 命令或按进程名批量终止。
+- 目标范围仅限选中项目和选中配置的实例；检查配置类型及 `canRun` / `canDebug`。
+- 先验证配置，再停止旧实例；确认进程退出后才启动替代实例。原生进程可用时也要检查其退出状态。
+- 停止超时不启动替代实例，不自动升级为强制杀进程。
+- 返回操作 ID 后查询同一操作。启动超时可能仍在构建，应保留进行中状态，不能直接重试重启。
+- 保持同一配置的并发隔离、精确执行事件匹配及配置删除、重命名后的处理。
+- Debug 连接成功以 `debuggerAttached=true` 为准，不能仅依靠模式或 `started`。
+- 进程启动成功不能描述为 Spring Boot 已就绪或业务健康检查通过。
+- 插件卸载和状态跟踪清理不额外终止业务进程。
+
+## 构建和验证
+
+从项目根目录运行 PowerShell。`IDEA_HOME` 指向 IDEA 2025.2，`JAVA_HOME` 指向包含 javac 的完整 JDK 21。路径有空格时保持引号。
+
+```powershell
+# 标准构建、测试与结构校验
+.\gradlew.bat "-PlocalIdePath=$env:IDEA_HOME" test buildPlugin verifyPluginStructure
+
+# Gradle 和依赖均已缓存时可离线运行
+.\gradlew.bat --gradle-user-home .gradle-user-home "-PlocalIdePath=$env:IDEA_HOME" test buildPlugin verifyPluginStructure --offline
+
+# 使用本机 IDEA JAR 编译打包，并进行协议 / HTTP 自检
+.\scripts\build-local.ps1 -IdeaHome $env:IDEA_HOME -JdkHome $env:JAVA_HOME -Test
+
+# 独立调试沙盒
+.\gradlew.bat "-PlocalIdePath=$env:IDEA_HOME" runIde
+
+# 单个测试类
+.\gradlew.bat "-PlocalIdePath=$env:IDEA_HOME" test --tests dev.ideamcp.RunControlServiceTest
+```
+
+按变更选择检查：
+
+| 变更 | 重点验证 |
+| --- | --- |
+| 协议、schema、认证、HTTP | `ProtocolTest` / `ProtocolSelfTest`：非法输入、请求边界、工具元数据 |
+| Java 符号与位置 | `JavaCodeToolsTest`：重载、语义引用、UTF-16、未保存内容 |
+| 令牌和生命周期 | `TokenPersistenceTest`：重建复用、令牌失效、保存失败、并发退出 |
+| 运行控制 | `RunControlServiceTest`：真实临时 JVM 的 Run / Debug、超时和事件隔离 |
+| 发布包和兼容范围 | `buildPlugin verifyPluginStructure`，按需要补充兼容验证 |
+| 仅文档 | 核对工具、版本、命令、默认值和链接；不必重跑完整集成测试或启动业务服务 |
+
+运行测试只使用独立沙盒和临时 JVM，结束时清理自己启动的进程。Windows 原生进程库被执行环境限制时，区分环境失败与代码失败，使用获得授权的测试环境；不修改用户的 IDE 安装来规避限制。
+
+`scripts/smoke-mcp.ps1` 仅做协议和查询自检，不重启业务服务。令牌通过环境变量或参数传入，禁止硬编码。
+
+## 维护和交付
+
+- 延续 Java 21 和 `dev.ideamcp` 包结构，保持协议层、IDE 适配层和界面层职责清晰。
+- 工具变更同步维护 `ToolCatalog`、参数校验、后端路由、测试和中英文 README。
+- 发布时同步 `build.gradle.kts`、`plugin.xml`、`RpcHandler.serverInfo.version` 及 README 版本和安装包路径。本地脚本从 `plugin.xml` 读取版本。
+- 插件 ID 和 `252.*` 范围的变更需要实际依据和验证，不能仅为消除提示而扩大兼容范围。
+- 交付 `build/distributions/idea-symbol-mcp-<version>.zip`。分别确认源码构建版本、用户已安装版本和 Codex 已发现的工具目录。
+- README 中英文内容保持一致，文末保留双语协作邀请。
+- 避免修改或提交 `build/`、`.gradle/`、`.gradle-user-home/`、`.intellijPlatform/`、`.idea/` 等生成内容；临时验证输出放在已忽略目录中。
+- 完成后说明改动、验证结果及实际限制。服务操作按证据报告配置名称、模式、进程状态和调试器连接结果。

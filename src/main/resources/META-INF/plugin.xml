@@ -1,0 +1,27 @@
+<idea-plugin>
+    <id>dev.ideamcp.symbols</id>
+    <name>Java Symbol MCP</name>
+    <version>0.2.0</version>
+    <vendor>IDEA MCP</vendor>
+    <description><![CDATA[Read Java symbols, resolve definitions and references, and restart existing local service configurations in Run or Debug mode through a local MCP endpoint.]]></description>
+    <idea-version since-build="252" until-build="252.*"/>
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.java</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <postStartupActivity implementation="dev.ideamcp.IdeaMcpStartup"/>
+    </extensions>
+    <actions>
+        <action id="IdeaMcp.Connection" class="dev.ideamcp.ConnectionAction" text="Java MCP: Copy Connection Configuration" description="Start the local server and copy its MCP connection configuration">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="IdeaMcp.Stop" class="dev.ideamcp.StopAction" text="Java MCP: Stop Server">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="IdeaMcp.SetToken" class="dev.ideamcp.SetTokenAction" text="Java MCP: Set Fixed Token">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="IdeaMcp.ResetToken" class="dev.ideamcp.ResetTokenAction" text="Java MCP: Reset Token">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
