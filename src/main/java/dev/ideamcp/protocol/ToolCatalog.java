@@ -24,7 +24,7 @@ public final class ToolCatalog {
         tools.add(tool("find_definition", "Resolve the Java reference at a position, including overloaded methods. Returns all valid polyvariant targets or the declaration itself.", position.deepCopy(), new String[]{"file", "line", "column"}));
         paging(position);
         position.add("includeDeclaration", object("type", "boolean", "default", false));
-        tools.add(tool("find_references", "Find semantic usages in project content of the symbol at a declaration or reference position. Resolves the exact overload; ambiguous targets return an error.", position, new String[]{"file", "line", "column"}));
+        tools.add(tool("find_references", "Find semantic usages in project content of the symbol at a declaration or reference position. Resolves the exact overload; ambiguous targets return an error. Deduplicates and sorts by file URL and numeric source offsets before pagination, returning total. Pages are stable while project contents and indices are unchanged.", position, new String[]{"file", "line", "column"}));
         JsonObject configurations = common.deepCopy();
         configurations.add("name", string("Optional case-insensitive substring of the saved configuration name."));
         tools.add(tool("list_run_configurations", "List existing IDEA run configurations with exact IDs, supported Run/Debug modes and live process/debugger sessions. Does not expose VM arguments or environment variables.", configurations, new String[]{}));

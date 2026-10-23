@@ -73,7 +73,7 @@ if ($Test -or $PsiTest) {
             '-Didea.load.plugins.id=com.intellij.java', '-Didea.force.use.core.classloader=true',
             '-Djava.system.class.loader=com.intellij.util.lang.PathClassLoader')
         $productVmArgs = @($ideaInfo.launch[0].additionalJvmArguments | Where-Object { $_.StartsWith('--add-opens=') })
-        & $java @vmArgs @productVmArgs -classpath $testClasspath org.junit.runner.JUnitCore dev.ideamcp.JavaCodeToolsTest dev.ideamcp.TokenPersistenceTest dev.ideamcp.RunControlServiceTest
+        & $java @vmArgs @productVmArgs -classpath $testClasspath org.junit.runner.JUnitCore dev.ideamcp.JavaCodeToolsTest dev.ideamcp.ReferencePaginationTest dev.ideamcp.TokenPersistenceTest dev.ideamcp.RunControlServiceTest
         if ($LASTEXITCODE -ne 0) { throw "PSI integration tests failed. Logs: $sandbox/log" }
     }
 }

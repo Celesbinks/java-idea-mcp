@@ -5,7 +5,7 @@
 ## 项目与技术栈
 
 - Java Symbol MCP 是 IntelliJ IDEA 插件，复用正在运行的 IDE 的 Java PSI、项目索引和 Execution API。
-- 当前版本 `0.2.0`；目标为 IDEA `2025.2` / `252.*`，Java 21。
+- 当前版本 `0.2.1`；目标为 IDEA `2025.2` / `252.*`，Java 21。
 - 使用 Gradle 9.0.0 Wrapper、IntelliJ Platform Gradle Plugin 2.18.1、JUnit 4。
 - 插件 ID：`dev.ideamcp.symbols`；显示名称：`Java Symbol MCP`。
 - 本机 MCP 地址默认为 `http://127.0.0.1:64123/mcp`，使用 Bearer 认证。
@@ -91,7 +91,7 @@
 | 变更 | 重点验证 |
 | --- | --- |
 | 协议、schema、认证、HTTP | `ProtocolTest` / `ProtocolSelfTest`：非法输入、请求边界、工具元数据 |
-| Java 符号与位置 | `JavaCodeToolsTest`：重载、语义引用、UTF-16、未保存内容 |
+| Java 符号与位置 | `JavaCodeToolsTest` / `ReferencePaginationTest`：重载、语义引用、UTF-16、未保存内容和跨页完整性 |
 | 令牌和生命周期 | `TokenPersistenceTest`：重建复用、令牌失效、保存失败、并发退出 |
 | 运行控制 | `RunControlServiceTest`：真实临时 JVM 的 Run / Debug、超时和事件隔离 |
 | 发布包和兼容范围 | `buildPlugin verifyPluginStructure`，按需要补充兼容验证 |

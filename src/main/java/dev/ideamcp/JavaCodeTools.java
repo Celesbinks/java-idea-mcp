@@ -165,20 +165,35 @@ public final class JavaCodeTools {
         if (targets.size() != 1) throw new IllegalArgumentException("AMBIGUOUS: position resolves to multiple symbols");
         PsiElement target = targets.getFirst();
         Page page = new Page(args);
-        Set<String> seen = new HashSet<>();
-        if (Arguments.bool(args, "includeDeclaration", false)) page.add(object("location", location(target, nameRange(target)), "declaration", true));
-        if (!page.full()) ReferencesSearch.search(target, GlobalSearchScope.projectScope(project)).forEach(reference -> {
+        // Search callbacks may arrive in a different order on each request. Applying
+        // offset/limit while traversing the query can therefore repeat or skip usages.
+        // Deduplicate and order the complete result before taking any page.
+        NavigableMap<ReferenceKey, ReferenceLocation> references = new TreeMap<>(Comparator
+                .comparing(ReferenceKey::fileUrl).thenComparingInt(ReferenceKey::start).thenComparingInt(ReferenceKey::end));
+        ReferencesSearch.search(target, GlobalSearchScope.projectScope(project)).forEach(reference -> {
             ProgressManager.checkCanceled();
             PsiElement element = reference.getElement();
+            PsiFile file = element.getContainingFile();
+            if (file == null || file.getVirtualFile() == null) return true;
             TextRange range = reference.getRangeInElement().shiftRight(element.getTextRange().getStartOffset());
-            String key = element.getContainingFile().getVirtualFile().getUrl() + ":" + range;
-            return !seen.add(key) || page.add(object("location", location(element, range), "declaration", false));
+            ReferenceKey key = new ReferenceKey(file.getVirtualFile().getUrl(), range.getStartOffset(), range.getEndOffset());
+            references.putIfAbsent(key, new ReferenceLocation(element, range));
+            return true;
         });
+        boolean includeDeclaration = Arguments.bool(args, "includeDeclaration", false);
+        if (includeDeclaration) page.addLazy(() -> object("location", location(target, nameRange(target)), "declaration", true));
+        for (ReferenceLocation reference : references.values()) {
+            ProgressManager.checkCanceled();
+            if (!page.addLazy(() -> object("location", location(reference.element(), reference.range()), "declaration", false))) break;
+        }
         JsonObject result = page.result("references");
+        result.addProperty("total", references.size() + (includeDeclaration ? 1 : 0));
         result.add("target", symbol(target));
-        result.addProperty("order", "IDE index order; pagination is best-effort while files or indices change");
+        result.addProperty("order", "declaration first when requested, then file URL, start offset and end offset; stable while project contents and indices are unchanged");
         return result;
     }
+    private record ReferenceKey(String fileUrl, int start, int end) {}
+    private record ReferenceLocation(PsiElement element, TextRange range) {}
     private static String sortKey(PsiElement element) {
         PsiFile file = element.getContainingFile();
         VirtualFile vf = file == null ? null : file.getVirtualFile();
@@ -240,11 +255,13 @@ public final class JavaCodeTools {
             limit = Arguments.integer(args, "limit", 100, 1, 200);
         }
         boolean add(JsonObject item) {
+            return addLazy(() -> item);
+        }
+        boolean addLazy(Supplier<JsonObject> item) {
             if (visited++ < offset) return true;
             if (items.size() == limit) { more = true; return false; }
-            items.add(item); return true;
+            items.add(item.get()); return true;
         }
-        boolean full() { return more; }
         JsonObject result(String key) { return object(key, items, "offset", offset, "limit", limit, "hasMore", more, "nextOffset", more ? offset + items.size() : null); }
     }
 }

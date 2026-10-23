@@ -42,7 +42,7 @@ public final class RpcHandler {
         String requested = Arguments.required(params, "protocolVersion");
         String version = VERSIONS.contains(requested) ? requested : "2025-11-25";
         return object("protocolVersion", version, "capabilities", object("tools", object("listChanged", false)),
-                "serverInfo", object("name", "idea-symbol-mcp", "version", "0.2.0"),
+                "serverInfo", object("name", "idea-symbol-mcp", "version", "0.2.1"),
                 "instructions", "Use list_projects first. Positions are 1-based UTF-16. Queries use current committed editor contents. Retry INDEXING or DOCUMENTS_UNCOMMITTED errors after IDEA settles. For service restart/debug, list_run_configurations first, restart only the user-requested exact configuration ID, and poll get_run_operation until completion. A started process is not a health check.");
     }
 

@@ -10,7 +10,7 @@ Query Java code and start or restart existing Run / Debug configurations through
 
 ### 概览
 
-当前版本 **0.2.0**，目标为 **IntelliJ IDEA 2025.2（252.*）**，使用 Java 21。插件复用 IDEA 的 Java PSI、项目索引和 Execution API，提供以下 7 个 MCP 工具。
+当前版本 **0.2.1**，目标为 **IntelliJ IDEA 2025.2（252.*）**，使用 Java 21。插件复用 IDEA 的 Java PSI、项目索引和 Execution API，提供以下 7 个 MCP 工具。
 
 | 工具 | 用途 | 必要参数 |
 | --- | --- | --- |
@@ -26,7 +26,7 @@ Query Java code and start or restart existing Run / Debug configurations through
 
 ### 安装与连接
 
-1. 构建插件，或使用已生成的 [0.2.0 安装包](build/distributions/idea-symbol-mcp-0.2.0.zip)。构建产物不随源码保存。
+1. 构建插件，或使用已生成的 [0.2.1 安装包](build/distributions/idea-symbol-mcp-0.2.1.zip)。构建产物不随源码保存。
 2. IDEA → **Settings → Plugins → 齿轮 → Install Plugin from Disk**，选择 ZIP，按提示安装或重启。
 3. 打开 Java 项目，在 IDEA 主窗口执行 **Tools → Java MCP: Copy Connection Configuration**；也可以连按两次 Shift 搜索此操作。
 4. 将复制的配置加入支持 Streamable HTTP 的 MCP 客户端。索引查询应等待 IDEA 完成索引。
@@ -81,7 +81,7 @@ http_headers = { Authorization = "Bearer <YOUR_TOKEN>" }
 - `query` 是区分大小写的精确短名称（如 `UserService`、`findById`）或完整类名（如 `com.example.UserService`），可能返回多个类或重载。`includeLibraries` 默认 `false`，仅对名称查询有效。
 - 行列从 **1** 开始，列按 **UTF-16** 计数；emoji 通常占两列。位置应落在标识符上，输出范围终点 `endLine` / `endColumn` 为右开区间。
 - `read_symbols`、`find_references` 支持 `limit`（1–200，默认 100）和 `offset`（0–1,000,000，默认 0），返回 `hasMore` / `nextOffset`。引用可用 `includeDeclaration=true` 包含声明。
-- 文件声明按源码顺序返回，名称结果按文件与位置排序，引用按索引顺序返回；编辑或索引变化可能影响分页。方法名查询约有 10,000 个候选收集上限，结果用 `candidateLimitReached` 提示。
+- 文件声明按源码顺序返回，名称结果按文件与位置排序。引用先按完整文件位置去重，再按文件 URL、起始偏移、结束偏移稳定排序后分页，返回唯一结果总数 `total`；包含声明时声明始终排在首位，且计入总数。源码或索引改变后应从头查询。方法名查询约有 10,000 个候选收集上限，结果用 `candidateLimitReached` 提示。
 - 结果包含名称、类型、签名、修饰符、位置、导航位置和最多 500 个 UTF-16 字符的所在行片段。依赖没有源码时，位置可能仅有反编译路径或 URL。
 - 读取当前已提交到 PSI 的编辑内容，不要求保存到磁盘。`DOCUMENTS_UNCOMMITTED`、`INDEXING` 可在 IDEA 稳定后重试。
 
@@ -171,7 +171,7 @@ Gradle 及依赖已缓存时，可使用离线构建；也可单独运行测试�
 
 产物：`build/distributions/idea-symbol-mcp-<version>.zip`；测试报告：`build/reports/tests/test/index.html`。测试使用独立 IDEA 沙盒；运行控制测试启动并清理自己的临时 JVM。Windows 测试需要允许加载 IDEA 原生进程管理库。
 
-最近一次 0.2.0 回归通过 **23 项 JUnit 测试**，协议自检含 **47 项断言**，并通过插件结构校验。覆盖真实 JVM 的 Run / Debug 切换、保留模式重启、超时及执行事件隔离。
+最近一次 0.2.1 回归通过 **26 项 JUnit 测试**，协议自检含 **47 项断言**，并通过插件结构校验。覆盖真实 JVM 的 Run / Debug 切换、保留模式重启、超时、执行事件隔离，以及 481 处引用在多种页大小和请求顺序下的无重复、无遗漏分页。
 
 对已安装插件做只读连接自检：
 
@@ -214,7 +214,7 @@ POST 要求 `Content-Type: application/json` 和 `Accept: application/json, text
 
 ### Overview
 
-Version **0.2.0** targets **IntelliJ IDEA 2025.2 (252.*)** and uses Java 21. The plugin reuses IDEA's Java PSI, project indexes and Execution API to expose seven MCP tools.
+Version **0.2.1** targets **IntelliJ IDEA 2025.2 (252.*)** and uses Java 21. The plugin reuses IDEA's Java PSI, project indexes and Execution API to expose seven MCP tools.
 
 | Tool | Purpose | Required arguments |
 | --- | --- | --- |
@@ -230,7 +230,7 @@ Every tool except `list_projects` accepts `project`. With multiple projects open
 
 ### Install and connect
 
-1. Build the plugin or use the generated [0.2.0 distribution](build/distributions/idea-symbol-mcp-0.2.0.zip). Build artifacts are not included with the source.
+1. Build the plugin or use the generated [0.2.1 distribution](build/distributions/idea-symbol-mcp-0.2.1.zip). Build artifacts are not included with the source.
 2. Select **Settings → Plugins → gear → Install Plugin from Disk** in IDEA, choose the ZIP and follow any restart prompt.
 3. Open a Java project and run **Tools → Java MCP: Copy Connection Configuration** in the main window. Alternatively, press Shift twice and search for the action.
 4. Add the copied configuration to a Streamable HTTP MCP client. Wait for indexing before index-dependent queries.
@@ -285,7 +285,7 @@ When upgrading from 0.1.0, save the existing client token with **Set Fixed Token
 - `query` is an exact, case-sensitive short name such as `UserService` or `findById`, or a fully qualified class name such as `com.example.UserService`. Multiple classes or overloads can match. `includeLibraries` defaults to `false` and applies only to name queries.
 - Positions are **1-based**, with **UTF-16** columns; an emoji typically occupies two columns. Point at an identifier. Returned `endLine` / `endColumn` positions are exclusive.
 - `read_symbols` and `find_references` accept `limit` (1–200, default 100) and `offset` (0–1,000,000, default 0), returning `hasMore` / `nextOffset`. References can include declarations with `includeDeclaration=true`.
-- File results follow source order; name results are sorted by file and position; references follow index order. Edits or index changes affect pagination. Method-name collection has an approximately 10,000-candidate cap, reported by `candidateLimitReached`.
+- File results follow source order; name results are sorted by file and position. References are deduplicated by complete source range, sorted by file URL and numeric start/end offsets, then paginated, with a unique-result `total`. A requested declaration stays first and counts toward that total. Restart pagination after source or index changes. Method-name collection has an approximately 10,000-candidate cap, reported by `candidateLimitReached`.
 - Results include names, kinds, signatures, modifiers, locations, navigation locations and up to 500 UTF-16 units from the containing line. Dependencies without source may provide only decompiled paths or URLs.
 - Queries use current editor content committed to PSI without requiring a disk save. Retry `DOCUMENTS_UNCOMMITTED` or `INDEXING` after IDEA settles.
 
@@ -375,7 +375,7 @@ Use offline Gradle only after Gradle and dependencies are cached, or run a speci
 
 Distribution: `build/distributions/idea-symbol-mcp-<version>.zip`. Test report: `build/reports/tests/test/index.html`. Tests use isolated IDEA sandboxes; execution tests start and clean up their own disposable JVMs. Windows testing requires access to IDEA's native process-management libraries.
 
-The latest 0.2.0 regression passed **23 JUnit tests**, with **47 protocol assertions** and plugin structure verification. Coverage includes real JVM Run / Debug transitions, mode-preserving restart, timeouts and execution-event isolation.
+The latest 0.2.1 regression passed **26 JUnit tests**, with **47 protocol assertions** and plugin structure verification. Coverage includes real JVM Run / Debug transitions, mode-preserving restart, timeouts, execution-event isolation, and complete duplicate-free pagination of 481 usages across different page sizes and request orders.
 
 Run read-only connectivity checks against an installed plugin:
 
