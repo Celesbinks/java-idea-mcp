@@ -5,11 +5,11 @@
 ## 项目与技术栈
 
 - Java Symbol MCP 是 IntelliJ IDEA 插件，复用正在运行的 IDE 的 Java PSI、项目索引和 Execution API。
-- 当前版本 `0.4.0`；目标为 IDEA `2025.2` / `252.*`，Java 21。
-- 使用 Gradle 9.0.0 Wrapper、IntelliJ Platform Gradle Plugin 2.18.1、JUnit 4。
+- 当前版本 `0.6.8`；目标为 IDEA `2026.2.3` / `262.10968.63`～`262.*`，Java 21 语言级别和字节码，使用 JDK 25 编译和测试。
+- 使用 Gradle 9.1.0 Wrapper、IntelliJ Platform Gradle Plugin 2.18.1、JUnit 4。
 - 插件 ID：`dev.ideamcp.symbols`；显示名称：`Java Symbol MCP`。
 - 本机 MCP 地址默认为 `http://127.0.0.1:64123/mcp`，使用 Bearer 认证。
-- 工具名称、schema、默认值以 [ToolCatalog.java](src/main/java/dev/ideamcp/protocol/ToolCatalog.java) 为准；使用说明见 [README.md](README.md)。
+- 原生 21 个工具的名称、schema、默认值以 [ToolCatalog.java](src/main/java/dev/ideamcp/protocol/ToolCatalog.java) 为准；可选官方入口来自当前 IDE 的真实提供方及筛选设置，完整基线为 56 个，合计最多 77 个。设计见 [能力对齐与自动连接](docs/design/jetbrains-parity-and-auto-connect.md)，使用说明见 [README.md](README.md)。
 
 ## 代码地图
 
@@ -17,6 +17,14 @@
 | --- | --- |
 | `IdeaMcpStartup.java` / `IdeaMcpService.java` | 后台启动、应用级 HTTP 生命周期、连接配置与令牌更新 |
 | `IdeaToolBackend.java` | 路由代码查询与 EDT 运行控制请求 |
+| `OfficialMcpAdapter.java` / `PlatformToolProvider.java` | 可选官方 MCP 提供方的目录、筛选与协程调用；不绕过禁用或确认设置 |
+| `FileEnumeration.java` | 明确目录下完整文件名枚举；复用官方匹配规则，复杂范围/截断/超预算回退 |
+| `DirectoryTree.java` | 宽根完整磁盘目录树；有界名称形状与缓存负向资格判断，完整 NIO 属性与官方渲染，小树/目录密集/链接/变化/超预算回退 |
+| `GitStatusBatch.java` | 2～4 个项目内独立 Git 根的有界并行官方查询；共享预算、快照校验、复杂范围回退 |
+| `protocol/QueryTiming.java` / `protocol/HttpTimingEvent.java` | 默认关闭的请求内计时；认证响应头与可选 JFR 完成事件按数值序号关联，不存参数或输出 |
+| `PlatformOperationService.java` | 官方长操作的异步提交、最终 MCP 结果和取消请求 |
+| `ClientConfiguration.java` / `AutoClientService.java` | 客户端格式、原子合并、所有权摘要与后台连接配置维护 |
+| `protocol/StdioBridge.java` | Claude Desktop 所需的独立 stdio→认证 HTTP 桥接 |
 | `JavaCodeTools.java` | Java 符号、定义、引用、项目选择和位置转换 |
 | `JavaCallTools.java` / `DiagnosticsTools.java` | 单层静态调用位置、精确重载和后台单文件错误/警告分析 |
 | `RunControlService.java` | 项目级运行配置查询、异步重启状态机和执行事件跟踪 |
@@ -75,7 +83,7 @@
 
 ## 构建和验证
 
-从项目根目录运行 PowerShell。`IDEA_HOME` 指向 IDEA 2025.2，`JAVA_HOME` 指向包含 javac 的完整 JDK 21。路径有空格时保持引号。
+从项目根目录运行 PowerShell。`IDEA_HOME` 指向 IDEA 2026.2.3，`JAVA_HOME` 指向包含 javac 的完整 JDK 25（可用 IDEA 自带的 `jbr`）。262 平台 API 使用 Java 25 类文件；插件仍以 `--release 21` 编译。路径有空格时保持引号。
 
 ```powershell
 # 标准构建、测试与结构校验
@@ -107,6 +115,13 @@
 | 调试现场与断点 | `DebugServiceTest` / `DebugValueTest`：两台临时 JVM 的会话隔离、暂停令牌、线程/栈/局部变量、三种单步、继续/暂停、断点增删和无求值渲染 |
 | 发布包和兼容范围 | `buildPlugin verifyPluginStructure`，按需要补充兼容验证 |
 | 仅文档 | 核对工具、版本、命令、默认值和链接；不必重跑完整集成测试或启动业务服务 |
+| 文件枚举优化 | `FileEnumerationTest`：与真实官方提供方差分、目录/排除/上限回退、VFS 变化、取消和外部模块根；传 `-PrgExecutable=<rg.exe>` 执行同范围性能复测 |
+| 目录树优化 | `DirectoryTreeTest`：真实官方全对象差分、深度/Unicode/磁盘变化/排除/未刷新/宽度阈值/junction/取消/禁用与替换提供方；传 `-PdirectoryBenchmark=true` 执行两轮每方 80 次同层小树/4096 文件树基准（也兼容 rgExecutable） |
+| 目录树资格判断 | `DirectoryQualificationTest`：31/32 根项、浅深度、混合根、陈旧完整目录密集 VFS、增删改名及取消；传 `-PdirectoryQualificationBenchmark=true -PbaselinePluginJar=<0.6.7插件JAR>` 做官方/已发布旧算法/候选同包装两轮每方 84 次完整结果对照（含撤回数量门槛后的 63/64、127/128、255/256）；先将自然目录冻结到 `build/benchmarks/068-qualification/input/natural`，不同时启用其他性能实验 |
+| 按名称分派/schema | `OfficialMcpAdapterTest`：单项描述与完整目录一致、默认提供方兼容、请求内分派、查找后禁用/路由变化/移除提供方、非空诊断与未保存修复；传 `-PrgExecutable=<rg.exe>` 运行同层单项与项目概览基准 |
+| Git 调度 / 调用树定位 | `GitStatusBatchTest`：真实多仓库、过滤/计数/截断、分支、取消与回退；`QueryPerformanceTest`：官方 Git 处理器与调用树阶段定位。传 `-PrgExecutable=<rg.exe>` 启用 80 对完整结果性能实验，反射仅限测试 |
+| 混合任务尾延迟 / 分段计时 | `QueryTimingTest`：默认关闭、认证、响应不变与上下文隔离；`FixedLoadGitPerformanceTest`：每次取样固定完整前序、真实 Git 命令阶段、三方 84 次平衡对照、两轮复测、取消与 20 秒超时。传 `-PrgExecutable=<rg.exe>` 启用性能实验，服务代理和命令识别反射仅限独立沙盒 |
+| HTTP 完成 / Git 等待细分 | `protocol.HttpCompletionTest`：认证、数值事件、头/事件关联、缺失阶段、线程/连接复用和写失败关闭；`FixedLoadGitPerformanceTest` 另做隔离的进程等待 JFR 诊断。性能对照传 `-PbaselinePluginJar=<0.6.5插件JAR>` 使用旧 HTTP 边界；未传时保留 IO 测试候选。见 `docs/design/git-command-and-http-completion.md` |
 
 运行测试只使用独立沙盒和临时 JVM，结束时清理自己启动的进程。Windows 原生进程库被执行环境限制时，区分环境失败与代码失败，使用获得授权的测试环境；不修改用户的 IDE 安装来规避限制。
 
@@ -117,7 +132,7 @@
 - 延续 Java 21 和 `dev.ideamcp` 包结构，保持协议层、IDE 适配层和界面层职责清晰。
 - 工具变更同步维护 `ToolCatalog`、参数校验、后端路由、测试和中英文 README。
 - 发布时同步 `build.gradle.kts`、`plugin.xml`、`RpcHandler.serverInfo.version` 及 README 版本和安装包路径。本地脚本从 `plugin.xml` 读取版本。
-- 插件 ID 和 `252.*` 范围的变更需要实际依据和验证，不能仅为消除提示而扩大兼容范围。
+- 插件 ID 和 `262.10968.63`～`262.*` 范围的变更需要实际依据和验证，不能仅为消除提示而扩大兼容范围。
 - 交付 `build/distributions/idea-symbol-mcp-<version>.zip`。分别确认源码构建版本、用户已安装版本和 Codex 已发现的工具目录。
 - README 中英文内容保持一致，文末保留双语协作邀请。
 - 避免修改或提交 `build/`、`.gradle/`、`.gradle-user-home/`、`.intellijPlatform/`、`.idea/` 等生成内容；临时验证输出放在已忽略目录中。

@@ -6,8 +6,29 @@ import static dev.ideamcp.protocol.Json.object;
 
 /** Stateless MCP 2025 Streamable HTTP subset: JSON responses, no sessions or server push. */
 public final class RpcHandler {
+    @FunctionalInterface public interface Invocation { JsonObject call(JsonObject arguments) throws Exception; }
+    public record ToolCall(JsonObject descriptor, Invocation invocation) {
+        public JsonObject call(JsonObject arguments) throws Exception { return invocation.call(arguments); }
+    }
     public static final Set<String> VERSIONS = Set.of("2025-03-26", "2025-06-18", "2025-11-25");
-    @FunctionalInterface public interface Backend { JsonObject call(String name, JsonObject arguments) throws Exception; }
+    @FunctionalInterface public interface Backend {
+        JsonObject call(String name, JsonObject arguments) throws Exception;
+        default JsonArray tools() { return ToolCatalog.tools(); }
+        default JsonObject tool(String name) {
+            for (JsonElement item : tools())
+                if (name.equals(item.getAsJsonObject().get("name").getAsString())) return item.getAsJsonObject();
+            return null;
+        }
+        default ToolCall prepare(String name) {
+            JsonObject descriptor = null;
+            if (ToolCatalog.NAMES.contains(name)) {
+                for (JsonElement item : ToolCatalog.tools())
+                    if (name.equals(item.getAsJsonObject().get("name").getAsString())) descriptor = item.getAsJsonObject();
+            } else descriptor = tool(name);
+            return descriptor == null ? null : new ToolCall(descriptor, args -> callTool(name, args));
+        }
+        default JsonObject callTool(String name, JsonObject arguments) throws Exception { return result(call(name, arguments), false); }
+    }
     private final Backend backend;
     public RpcHandler(Backend backend) { this.backend = backend; }
 
@@ -28,13 +49,15 @@ public final class RpcHandler {
             JsonObject result = switch (method) {
                 case "initialize" -> initialize(params);
                 case "ping" -> object();
-                case "tools/list" -> object("tools", ToolCatalog.tools());
+                case "tools/list" -> object("tools", backend.tools());
                 case "tools/call" -> call(params);
                 default -> null;
             };
             return result == null ? error(id, -32601, "Unknown method: " + method) : object("jsonrpc", "2.0", "id", id, "result", result);
         } catch (IllegalArgumentException e) {
             return error(id, -32602, e.getMessage());
+        } catch (RuntimeException e) {
+            return error(id, -32603, "IDE tool discovery failed: " + e.getClass().getSimpleName());
         }
     }
 
@@ -42,20 +65,24 @@ public final class RpcHandler {
         String requested = Arguments.required(params, "protocolVersion");
         String version = VERSIONS.contains(requested) ? requested : "2025-11-25";
         return object("protocolVersion", version, "capabilities", object("tools", object("listChanged", false)),
-                "serverInfo", object("name", "idea-symbol-mcp", "version", "0.4.0"),
+                "serverInfo", object("name", "idea-symbol-mcp", "version", "0.6.8"),
                 "instructions", "Use list_projects first. Positions are 1-based UTF-16. Queries use current committed editor contents. Retry INDEXING or DOCUMENTS_UNCOMMITTED errors after IDEA settles. For service startup/restart, list_run_configurations first, restart only the user-requested exact configuration ID, and poll get_run_operation until completion. A started process is not a health check. For debugger inspection, list_debug_sessions first and use its exact sessionId and current pauseId. Debug controls and breakpoint changes require the user's explicit request; poll sessions after control acceptance and never reuse an old pauseId.");
     }
 
     private JsonObject call(JsonObject params) {
         String name = Arguments.required(params, "name");
-        if (!ToolCatalog.NAMES.contains(name)) throw new IllegalArgumentException("Unknown tool: " + name);
+        ToolCall prepared;
+        try (var phase = QueryTiming.phase("rpc_prepare")) { prepared = backend.prepare(name); }
+        if (prepared == null) throw new IllegalArgumentException("Unknown tool: " + name);
         if (params.has("arguments") && !params.get("arguments").isJsonObject()) throw new IllegalArgumentException("arguments must be an object");
         JsonObject args = params.has("arguments") ? params.getAsJsonObject("arguments") : object();
         try {
             // Validate against the published schema before invoking PSI (reject typos too).
-            validate(name, args);
-            JsonObject data = backend.call(name, args);
-            return result(data, false);
+            try (var phase = QueryTiming.phase("rpc_validate")) {
+                SchemaValidator.validate(prepared.descriptor().getAsJsonObject("inputSchema"), args);
+                if (ToolCatalog.NAMES.contains(name)) validate(name, args);
+            }
+            try (var phase = QueryTiming.phase("rpc_invoke_total")) { return prepared.call(args); }
         } catch (Exception e) {
             return result(object("error", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()), true);
         }

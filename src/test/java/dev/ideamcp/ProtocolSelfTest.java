@@ -25,7 +25,7 @@ public final class ProtocolSelfTest {
         initialized = handler.handle(request(1, "initialize", object("protocolVersion", "2099-01-01")));
         check(initialized.getAsJsonObject("result").get("protocolVersion").getAsString().equals("2025-11-25"), "unsupported version fallback");
         for (String version : RpcHandler.VERSIONS) check(handler.handle(request(1, "initialize", object("protocolVersion", version))).getAsJsonObject("result").get("protocolVersion").getAsString().equals(version), "supported version " + version);
-        check(handler.handle(request(2, "tools/list", object())).getAsJsonObject("result").getAsJsonArray("tools").size() == 19, "tool discovery");
+        check(handler.handle(request(2, "tools/list", object())).getAsJsonObject("result").getAsJsonArray("tools").size() == 21, "native tool discovery");
         JsonObject restartTool = null;
         for (JsonElement tool : ToolCatalog.tools()) if (tool.getAsJsonObject().get("name").getAsString().equals("restart_run_configuration")) restartTool = tool.getAsJsonObject();
         check(restartTool != null && !restartTool.getAsJsonObject("annotations").get("readOnlyHint").getAsBoolean(), "restart is advertised as a mutation");

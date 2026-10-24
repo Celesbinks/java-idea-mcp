@@ -1,0 +1,3 @@
+<idea-plugin>
+    <!-- Optional class-loader dependency; GitStatusBatch is reached only for the real Git tool. -->
+</idea-plugin>

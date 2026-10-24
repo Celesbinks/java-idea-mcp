@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration version="2.0" label="Java MCP HTTP timings" description="Only fixed numeric HTTP completion events; no request or JVM environment events." provider="Java Symbol MCP">
+  <event name="dev.ideamcp.HttpRequestCompleted">
+    <setting name="enabled">true</setting>
+    <setting name="stackTrace">false</setting>
+  </event>
+</configuration>

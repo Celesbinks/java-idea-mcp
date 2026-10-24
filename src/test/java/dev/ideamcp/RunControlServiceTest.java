@@ -45,16 +45,13 @@ public final class RunControlServiceTest extends JavaCodeInsightFixtureTestCase 
     }
     @Override protected void setUp() throws Exception {
         super.setUp();
-        // The optional Run console profiler attaches a monitor to short-lived JVMs;
-        // it is unrelated to execution/debugger behavior and can outlive fixture teardown.
-        com.intellij.openapi.util.registry.Registry.get("profiler.widget.in.run.console").setValue(false, getTestRootDisposable());
         // Heavy Java fixtures label their SDK as Java 5 even when addJdk points
         // at a real JDK. Execution needs accurate metadata as well as real roots.
         WriteAction.run(() -> {
             var sdk = ModuleRootManager.getInstance(getModule()).getSdk();
             assertNotNull(sdk);
             var modifier = sdk.getSdkModificator();
-            modifier.setVersionString("java version \"21\"");
+            modifier.setVersionString("java version \"" + Runtime.version().feature() + "\"");
             modifier.commitChanges();
         });
         service = getProject().getService(RunControlService.class);

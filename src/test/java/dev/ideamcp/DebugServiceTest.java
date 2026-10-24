@@ -49,9 +49,13 @@ public final class DebugServiceTest extends JavaCodeInsightFixtureTestCase {
             """;
     @Override protected void tuneFixture(JavaModuleFixtureBuilder builder)throws Exception{super.tuneFixture(builder);builder.addJdk(System.getProperty("idea.mcp.test.jdk",System.getProperty("java.home")));builder.setLanguageLevel(LanguageLevel.JDK_21);}
     @Override protected void setUp()throws Exception{
+        // Debugger source lookups initialize this default-project service lazily.
+        // Its listener lives beyond the fixture project; include it in the baseline.
+        TestApplicationManager.getInstance();
+        com.intellij.codeInsight.ExternalAnnotationsManager.getInstance(
+                com.intellij.openapi.project.ProjectManager.getInstance().getDefaultProject());
         super.setUp();
-        com.intellij.openapi.util.registry.Registry.get("profiler.widget.in.run.console").setValue(false,getTestRootDisposable());
-        WriteAction.run(()->{var sdk=ModuleRootManager.getInstance(getModule()).getSdk();var modifier=sdk.getSdkModificator();modifier.setVersionString("java version \"21\"");modifier.commitChanges();});
+        WriteAction.run(()->{var sdk=ModuleRootManager.getInstance(getModule()).getSdk();var modifier=sdk.getSdkModificator();modifier.setVersionString("java version \""+Runtime.version().feature()+"\"");modifier.commitChanges();});
         getProject().getService(RunLogService.class);
         getProject().getMessageBus().connect(getTestRootDisposable()).subscribe(ExecutionManager.EXECUTION_TOPIC,new ExecutionListener(){@Override public void processStarting(String executor,ExecutionEnvironment env,ProcessHandler handler){processes.add(handler);}});
     }

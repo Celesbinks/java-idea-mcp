@@ -10,7 +10,7 @@ Query Java code, call sites and diagnostics, read runtime logs, and start or res
 
 ### 概览
 
-当前版本 **0.4.0**，目标为 **IntelliJ IDEA 2025.2（252.*）**，使用 Java 21。插件复用 IDEA 的 Java PSI、项目索引和 Execution API，提供以下 19 个 MCP 工具。
+当前版本 **0.6.8**，目标为 **IntelliJ IDEA 2026.2.3（262.10968.63）**，兼容范围为 `262.10968.63`～`262.*`。使用 JDK 25 编译和测试，保留 Java 21 语言级别及字节码。保留原有 19 个工具，新增两个异步管理工具；再复用当前 IDE 中可用的官方工具提供方，完整基线为 **56 + 21 = 77 个工具**。实际目录受插件、许可、禁用及路由设置影响。
 
 | 工具 | 用途 | 必要参数 |
 | --- | --- | --- |
@@ -33,12 +33,58 @@ Query Java code, call sites and diagnostics, read runtime logs, and start or res
 | `list_breakpoints` | 查询本项目 Java 行断点及精确 ID | 无 |
 | `set_breakpoint` | 添加、启用或禁用指定行断点 | `file`, `line` |
 | `remove_breakpoint` | 删除指定 Java 行断点 | `breakpointId` |
+| `get_tool_operation` | 获取官方长操作的状态及最终完整 MCP 结果 | `operationId` |
+| `cancel_tool_operation` | 请求取消官方长操作；不会撤销副作用或停止业务进程 | `operationId` |
 
-除 `list_projects` 外，均可传 `project`。多个项目打开时，使用 `list_projects` 返回的完整项目路径；仅打开一个项目时可省略。
+原有项目工具使用 `project`，新增官方工具使用 `projectPath`；两个异步管理工具只需 `operationId`。多个项目打开时使用 `list_projects` 返回的完整项目路径。
+
+### 官方工具覆盖与自动配置
+
+0.6.3 按[只读工具性能设计](docs/design/readonly-tool-performance.md)减少调用中的全目录 schema 转换，并在请求内复用已选提供方；执行时仍重新检查当前可用性和 schema，不缓存结果或授权。官方诊断、符号搜索、Git 等算法继续复用。十三项生产基线、同层复测、完整项目概览任务及边界见[验证报告](docs/verification/0.6.3-readonly-performance.md)；单项的小幅改善与组合任务收益分别报告，不承诺所有工具都显著提速。
+
+0.6.3 安装后的[生产复验](docs/verification/0.6.3-installed.md)确认自动连接和 77 项工具调用正常。公平交替复测中，完整四查询项目概览中位数为 13 ms、官方为 14 ms；文件枚举为 6 ms、官方为 215.5 ms。旧单项计时器的轮换耦合问题已更正；诊断和调用树没有显著提速，沙盒改善率不能直接当成生产改善率。
+
+0.6.1 修复安装后官方目录只有 `execute_tool`、调用时缺少会话上下文的问题：目录跟随 IDEA 的直连/路由模式，路由复用真实官方筛选会话，预期工具错误保留内容。默认设置下的目录、路由调用与禁用规则均有回归测试；0.6.0 用户需安装修复包并重启 IDE、重载客户端。
+
+0.6.2 根据[文件枚举设计](docs/design/file-enumeration-optimization.md)优化 `search_file`：明确目录 `paths`、文件名 glob、`includeExcluded=false` 且完整结果少于 limit 时，直接枚举 IDEA 内容目录，复用官方 glob 与排除规则，不缓存文件列表。达到上限、复杂范围、预算耗尽及路由调用继续使用官方实现；完整结果无排序保证，截断结果保留官方顺序。[同条件沙盒验证](docs/verification/0.6.2-file-enumeration.md)包含全部 48 个源码文件的等价结果、速度复测、78 项测试及临时 Codex 的实际发现与枚举调用。
+
+安装 0.6.2 并重载后的[生产连接复验](docs/verification/0.6.2-installed.md)已确认 77 项工具及实际调用正常；相同 48 文件的当前 Codex 测量中位数为 idea-java 7.5 ms、官方 MCP 191 ms。
+
+新增入口覆盖官方文件/补丁、搜索/调用关系、诊断/构建、重构/格式化、Run、终端、13 个调试器、检查脚本/PSI、VCS 和 14 个数据库工具。全部名称与依赖见 [设计清单](docs/design/jetbrains-parity-and-auto-connect.md)，此前目录及路由修复见 [0.6.1 验证记录](docs/verification/0.6.1.md)。官方入口通过 IDE 进程内实现复用；已有原生工具继续保持独立实现。新的原生替代须通过等价结果及速度门槛，不以缩小结果冒充性能提升。
+
+安装后运行 **Tools → Java MCP: Auto-Configure Clients**，选择一个客户端，即可创建或接管匹配的 `idea-java` 条目。支持 Codex、Claude Code、Cursor、Windsurf、项目级 VS Code / Copilot；Claude Desktop 使用随插件提供的独立 Java stdio 桥接。只维护明确选中的客户端；IDE 重启、端口回退、固定令牌更新后自动同步。首次配置或工具升级后重载客户端。固定令牌仍由 PasswordSafe 保存；内存凭据模式不建立自动维护。JSON / JSONC 保留未知字段并重新排版，注释会移除；损坏或冲突条目拒绝覆盖。
+
+原生工具不依赖官方 MCP 插件。新增官方工具需要启用内置 MCP Server，以及对应的 Terminal / Shell、Debugger MCP、Database Tools and SQL、VCS、Qodana / Ultimate 等提供方；保持 IDE 的禁用、路由及确认规则，不自动启用 brave mode。`get_run_configurations` 及路由返回的结构化启动参数、环境字段会脱敏。官方调试求值/对象展开不具备原生 `read_debug_variables` 的无求值保证。
+
+`execute_tool`、构建、运行配置、终端、检查脚本、SQL 执行/预览/连接测试等长操作立即返回 `operationId`，轮询 `get_tool_operation`，检查 `phase`、`error` 和 `result.isError`；最终 `result` 保留完整 MCP 内容。取消仅表示请求已提交。完整异步清单以工具描述为准；其余官方调用等待上限 20 秒。
 
 ### 安装与连接
 
-1. 构建插件，或使用已生成的 [0.4.0 安装包](build/distributions/idea-symbol-mcp-0.4.0.zip)。构建产物不随源码保存。
+0.6.7 按[其他只读工具第二轮设计](docs/design/readonly-tool-performance-067.md)优化根目录至少 32 个直接子项的完整磁盘目录树。使用本次 NIO 枚举属性，保持官方排序、缩进、深度和全部节点；小目录、链接/junction、变化、异常或预算不足继续走官方。Git 状态保持现状。筛查、同层完整结果复测与安装边界见[验证报告](docs/verification/0.6.7-readonly-performance.md)。生产已通过 [0.6.7 安装后复验](docs/verification/0.6.7-installed.md)，自动连接、77 项目录和工具调用正常。
+
+18 项生产筛查通过 1584 次完整结果校验；独立沙盒同层完整 4096 文件树两轮每方 80 次，HTTP 中位数减少 40.6%～43.5%，P95 减少 40.1%～43.7%。最终 1328 次完整树比较、107 项 JUnit、94 项协议/HTTP 自检、外部临时 Codex 及构建/结构验证通过。已缓存小根仅用于选择官方回退，输出始终来自完整磁盘遍历；小树没有宣称提速，未缓存小根仍可能增加一次资格探测。
+
+安装后的[生产目录树复测](docs/verification/0.6.7-installed.md)通过 2001 次完整检查。4096 文件受控夹具在当前 Codex 中位数为 40/41 ms、官方均为 58 ms；同客户端 HTTP 中位数减少 38.1%～38.7%。小目录 160 个 HTTP 样本全部走官方回退，资格判断 P95 为 0.058～0.063 ms；自然 55 子项宽根没有稳定收益，HTTP P95 增加约 0.3 ms。受控夹具与自然目录分开报告；Git 和执行代码未改动。
+
+0.6.8 按[资格判断设计](docs/design/directory-tree-qualification-068.md)只保留已证实有收益的目录密集形状判断：完整缓存仅用于负向选择，磁盘探测最多 32 个根名称、四个分支及 512 个名称，输出继续执行完整遍历。普通文件数量门槛因自然目录收益不稳定、边界退步而撤回；自然宽目录 P95 未宣称解决。Git 保持不变。官方、已发布 0.6.7 和候选在同一 HTTP/RPC 包装下的两轮完整结果复测、独立沙盒及安装边界见[0.6.8 验证报告](docs/verification/0.6.8-directory-qualification.md)。
+
+已安装的 [0.6.8 生产复验](docs/verification/0.6.8-installed.md)确认自动连接、77 项发现及调用正常，4008 次完整结果检查通过。目录密集树在资格阶段全部转官方，耗时接近直接官方；4096 文件大树同客户端 HTTP 中位数仍减少 36.7%～37.5%，当前 Codex 两轮中位数均为 40 ms、官方均为 57 ms。自然宽根仍无稳定收益且 HTTP P95 仍有回退；Git 实现和设置、64 个源码/资源文件均未改动。
+
+0.6.6 按[Git 命令与 HTTP 完成边界设计](docs/design/git-command-and-http-completion.md)扩展观测；[验证报告](docs/verification/0.6.6-command-http.md)记录完整结果与性能边界。96 项 JUnit、94 项协议/HTTP 断言、独立沙盒和构建/结构检查通过。没有达到门槛的新执行优化，继续使用 Default 和官方 Git 实现。
+
+此前生产实例经 [0.6.6 安装后复验](docs/verification/0.6.6-installed.md)确认自动连接、77 项工具发现及原生/官方路由调用正常。完整 65 项 Git 状态、14 节点前序的公平基准和独立 JFR 诊断共通过 1254 次完整结果校验。固定每个 Git 样本的官方前序后，两轮每方各 80 次的 P95 为 77.908/78.770、70.490/77.834 ms（idea-java/官方）。88 个生产完成事件全部完成，86 个 Git（含预热）逐一关联；最慢混合样本 73.320 ms 中提供方占 70.899 ms、其余服务端合计 1.853 ms、客户端残余 0.568 ms。没有达到明显收益门槛，按用户要求停止继续优化，保留 0.6.6。
+
+开启 `dev.ideamcp.timings` 后，响应头新增 HTTP 任务排队、进入 handler 前与认证准入阶段，以及 `X-Java-Mcp-Timing-Id` 数值序号。完成后的发送/关闭耗时通过同序号的 `dev.ideamcp.HttpRequestCompleted` 自定义 JFR 事件关联，不能放回已经发出的计时头。默认不开启计时或录制；事件只含固定数值和完成标志，不含参数、工具名、路径、输出或凭据。缺失阶段为 −1，不当作零。需要完成事件时，用精确 IDEA PID 执行 `scripts/record-http-timings.ps1 -IdeaProcessId <PID> -JdkHome <JDK25>`；脚本仅启用 `scripts/http-timing.jfc` 指定的自定义事件。Git 命令探针和等待栈录制仍仅用于独立沙盒，未进入生产插件。
+
+0.6.5 的[完整验证](docs/verification/0.6.5-fixed-load.md)通过 **92 项 JUnit、94 项协议/HTTP 断言**及构建和结构检查。固定每次 Git 前序后，此前的大幅 P95 差距未重现；沙盒慢样本主要落在 Git 命令范围内，IO 调度候选未达门槛，运行路径继续使用 Default 与官方实现。
+
+0.6.5 按[混合任务尾延迟设计](docs/design/mixed-git-tail-latency.md)增加默认关闭的 HTTP 分段计时。需要诊断时，可在 IDEA 的自定义 VM 选项中添加 `-Ddev.ideamcp.timings=true` 并重启 IDEA；认证成功的响应会附带 `Server-Timing`，只含固定阶段名与毫秒耗时，响应正文和工具目录不变，不记录参数、路径、凭据或业务输出。`*_total` 为嵌套总时间，不能把全部字段直接相加；头部不包含之后的响应发送时间，异步操作只表示提交阶段。真实 Git 进程监听仅用于沙盒测试，不进入发布包。固定前序生产测量与候选门槛见[0.6.5 验证记录](docs/verification/0.6.5-fixed-load.md)。
+
+此前 0.6.5 的[安装后复验](docs/verification/0.6.5-installed.md)确认当时生产实例为 **0.6.5**，自动连接、77 项工具发现及原生/官方路由调用正常。固定每个 Git 样本的前序，完整 1 仓库 / 56 项状态、14 节点调用树的 830 次结果校验全部一致；三组每方各 80 次 Git 的 P95 为 73/72、89/87、78/80 ms（idea-java/官方），没有显示稳定提速，单次慢样本仍存在。上述测量未开启分段计时；随后已按用户要求添加 VM 选项并正常重启 IDEA，确认生产 Git 查询返回阶段计时，完整 57 项结果与官方一致。随后完成[生产分段复测](docs/verification/0.6.5-production-phases.md)：当前 Codex 对照与两轮同客户端 HTTP 共 2490 次完整结果校验通过。HTTP 首段排队 P95 为 0.034～0.064 ms；最大 177.605 ms 慢样本中提供方占 159.904 ms，固定前序组未覆盖成本 P95 约 17 ms。优化建议优先细分提供方内部与未覆盖阶段，继续使用 Default 和官方 Git 路径。
+
+0.6.4 按[调用树与 Git 性能设计](docs/design/call-tree-and-git-performance.md)对 2～4 个项目内独立 Git 仓库做有界并行调度，状态命令、解析、过滤、计数、排序和截断仍复用当前官方提供方；取消共享 20 秒查询预算。单仓库、显式选根、嵌套/外部根等保留官方路径。二进制进程读取未达收益门槛，调用树的候选搜索不能安全省略，均不替换。完整结果差分、尾延迟数据与安装边界见[0.6.4 验证记录](docs/verification/0.6.4-query-performance.md)。安装后的[生产复验](docs/verification/0.6.4-installed.md)确认 0.6.4 自动连接和 77 项工具正常；完整 14 节点调用树与单仓库 49 项 Git 状态均与官方一致。分任务复测中位数分别为 561/581 ms、62/64 ms（idea-java/官方）；混合轮测 Git P95 曾为 103/69 ms，完整保留两组数据。多仓库沙盒收益不适用于当前单仓库项目。
+
+1. 构建插件，或使用已生成的 [0.6.8 安装包](build/distributions/idea-symbol-mcp-0.6.8.zip)。构建产物不随源码保存。
 2. IDEA → **Settings → Plugins → 齿轮 → Install Plugin from Disk**，选择 ZIP，按提示安装或重启。
 3. 打开 Java 项目，在 IDEA 主窗口执行 **Tools → Java MCP: Copy Connection Configuration**；也可以连按两次 Shift 搜索此操作。
 4. 将复制的配置加入支持 Streamable HTTP 的 MCP 客户端。索引查询应等待 IDEA 完成索引。
@@ -245,26 +291,27 @@ http_headers = { Authorization = "Bearer <YOUR_TOKEN>" }
 
 ### 构建与测试
 
-需要包含 javac 的完整 **JDK 21**。PowerShell 本机路径示例：
+需要包含 javac 的完整 **JDK 25**，以读取 262 平台的 Java 25 API 类。插件源码和字节码仍使用 Java 21（`--release 21`），测试运行在 IDEA 对应的 JBR 25 上。PowerShell 本机路径示例：
 
 ```powershell
-$env:IDEA_HOME = 'D:\Program Files\JetBrains\IntelliJ IDEA 2025.2'
-# JAVA_HOME 应指向完整 JDK 21
+$env:IDEA_HOME = 'D:\Program Files\JetBrains\IntelliJ IDEA 2026.2.3'
+$env:JAVA_HOME = Join-Path $env:IDEA_HOME 'jbr' # 必须包含 javac
 .\gradlew.bat "-PlocalIdePath=$env:IDEA_HOME" test buildPlugin verifyPluginStructure
 .\gradlew.bat "-PlocalIdePath=$env:IDEA_HOME" runIde
 ```
 
-Wrapper 固定 Gradle 9.0.0 和发行包 SHA-256，IntelliJ Platform Gradle Plugin 为 2.18.1。首次构建会下载 Gradle 和依赖，不传 `localIdePath` 时下载 IDEA 2025.2。macOS / Linux 使用 `sh ./gradlew`；本地 PowerShell 打包脚本面向 Windows。
+Wrapper 固定支持 Java 25 的 Gradle 9.1.0 和发行包 SHA-256，IntelliJ Platform Gradle Plugin 为 2.18.1。首次构建会下载 Gradle 和依赖，不传 `localIdePath` 时下载 IDEA 2026.2.3。若 Gradle 自身运行于其他受支持的 JDK 且未检测到 JDK 25，Foojay 工具链解析器 1.0.0 会自动下载 JDK 25；配置 `JAVA_HOME` 为 IDEA 的 JBR 25 可复用本机运行时。macOS / Linux 使用 `sh ./gradlew`；本地 PowerShell 打包脚本面向 Windows。
 
-使用本机 IDEA JAR 离线编译打包，无需下载 Gradle 或 SDK：
+使用本机 IDEA JAR 编译打包。首次准备 TOML 运行依赖后，本地脚本可离线运行：
 
 ```powershell
+.\gradlew.bat "-PlocalIdePath=$env:IDEA_HOME" prepareLocalDependencies
 .\scripts\build-local.ps1 -IdeaHome $env:IDEA_HOME -JdkHome $env:JAVA_HOME
 .\scripts\build-local.ps1 -IdeaHome $env:IDEA_HOME -JdkHome $env:JAVA_HOME -Test
 .\scripts\build-local.ps1 -IdeaHome $env:IDEA_HOME -JdkHome $env:JAVA_HOME -PsiTest
 ```
 
-`-Test` 做协议 / HTTP 自检；`-PsiTest` 额外运行 PSI、令牌及 Run / Debug 集成测试，需要 JUnit 4.13.2、Hamcrest Core 1.3、OpenTest4j 1.3.0。默认读取用户 Maven 缓存，可用 `-JUnitJar`、`-HamcrestJar`、`-OpenTest4jJar` 指定。未传 `-JdkHome` 时优先使用 `JAVA_HOME`，再尝试 IDEA `jbr`；选中的运行时必须包含所需 JDK 工具。
+首次使用 `prepareLocalDependencies` 准备 tomlj 及其运行依赖。之后 `-Test` 做协议 / HTTP 自检，无需 Gradle。262 发行包不包含完整测试框架，`-PsiTest` 委托 Gradle `test` 运行独立沙盒测试。未传 `-JdkHome` 时优先使用 `JAVA_HOME`，再尝试 IDEA `jbr`。
 
 Gradle 及依赖已缓存时，可使用离线构建；也可单独运行测试类：
 
@@ -275,7 +322,9 @@ Gradle 及依赖已缓存时，可使用离线构建；也可单独运行测试�
 
 产物：`build/distributions/idea-symbol-mcp-<version>.zip`；测试报告：`build/reports/tests/test/index.html`。测试使用独立 IDEA 沙盒；运行控制测试启动并清理自己的临时 JVM。Windows 测试需要允许加载 IDEA 原生进程管理库。
 
-最近一次 0.4.0 回归通过 **49 项 JUnit 测试**，协议自检含 **94 项断言**，并通过插件结构校验。覆盖真实 JVM 的 Run / Debug 与日志捕获、两台临时 JVM 的调试隔离、线程/栈/局部变量、暂停令牌失效、三种单步与继续/暂停、断点增删、实例隔离和缓冲淘汰、错误/警告与未保存修复、静态调用分析，以及 481 处引用和 241 处调用的完整分页。测试沙盒关闭与被测功能无关的 Run 控制台性能监测，并在夹具结束时还原该设置；不修改用户 IDE。
+0.6.4 的[最终验证](docs/verification/0.6.4-query-performance.md)通过 **87 项 JUnit、94 项协议/HTTP 断言**及插件构建和结构检查。两轮同层和 HTTP 的完整多仓库差分达到收益门槛，单仓库回退没有明显额外开销；调用树保留官方实现。[安装后复验](docs/verification/0.6.4-installed.md)已确认生产服务为 0.6.4，工具与完整结果正常；单仓库和调用树未显示明显提速。
+
+2026-10-24 在 **IDEA 2026.2.3 / IU-262.10968.63、JBR 25.0.4、Gradle 9.1.0** 上，0.6.3 完整回归通过 **83 项 JUnit 测试**，协议自检含 **94 项断言**，并通过 `buildPlugin verifyPluginStructure`。覆盖真实 JVM 的 Run / Debug 与日志捕获、两台临时 JVM 的调试隔离、线程/栈/局部变量、暂停令牌失效、三种单步与继续/暂停、断点增删、实例隔离和缓冲淘汰、错误/警告与未保存修复、静态调用分析，以及 481 处引用和 241 处调用的完整分页。测试在独立配置、系统和日志目录中运行，并清理自行启动的临时 JVM；不修改用户 IDE。
 
 对已安装插件做只读连接自检：
 
@@ -293,21 +342,22 @@ $env:IDEA_MCP_TOKEN = '<YOUR_TOKEN_WITHOUT_BEARER_PREFIX>'
 | `IdeaToolBackend` | 路由查询与 EDT 运行控制，提交 / 查询等待上限 5 秒 |
 | `JavaCodeTools` | 后台非阻塞读操作中的 PSI 查询，等待上限 20 秒 |
 | `JavaCallTools` / `DiagnosticsTools` | 静态调用关系、后台单文件错误/警告分析 |
+| `FileEnumeration` | 有界、无缓存的完整目录枚举；不满足条件时回退官方搜索 |
 | `RunControlService` | 项目级状态机、进程终止和调试器跟踪 |
 | `RunLogService` / `RunLogBuffer` | 项目内执行事件订阅、实例隔离和有界日志游标 |
 | `DebugService` | EDT 调试协调、调试器管理线程上的 JDI 读取、暂停令牌、断点和单步 |
 | `TokenStore` / `*Action` | PasswordSafe 和 IDEA 菜单 |
 | `protocol/` | schema、参数校验、JSON-RPC 与 HTTP 认证边界 |
 
-仅监听回环地址，验证 Host / Origin 并要求 Bearer 认证。协议为 `2025-03-26`、`2025-06-18`、`2025-11-25` 的无会话 Streamable HTTP 子集，提供 `initialize`、初始化通知、`ping`、`tools/list`、`tools/call`。响应使用 JSON；GET / DELETE 返回 405；没有 SSE 推送、stdio、资源或 MCP 协议级任务接口。重启操作 ID 是工具的应用级约定。
+仅监听回环地址，验证 Host / Origin 并要求 Bearer 认证。协议为 `2025-03-26`、`2025-06-18`、`2025-11-25` 的无会话 Streamable HTTP 子集，提供 `initialize`、初始化通知、`ping`、`tools/list`、`tools/call`。响应使用 JSON；GET / DELETE 返回 405；没有 SSE 推送、资源或 MCP 协议级任务接口；stdio 客户端通过独立桥接进程连接 HTTP。重启操作 ID 是工具的应用级约定。
 
-POST 要求 `Content-Type: application/json` 和 `Accept: application/json, text/event-stream`，请求体上限 1 MiB。目前仅验证本地 IDEA 2025.2，其他版本、Remote Development 和分离前后端尚未验证。
+POST 要求 `Content-Type: application/json` 和 `Accept: application/json, text/event-stream`，请求体上限 1 MiB。0.6.8 针对本地 IDEA 2026.2.3，其他版本、Remote Development 和分离前后端尚未验证；IDEA 2025.2 请使用旧版 0.4.0。
 
 | 问题 | 处理 |
 | --- | --- |
 | HTTP 401 | 核对令牌，复制当前配置或保存客户端原令牌为固定值 |
 | 连接失败或端口改变 | 打开 IDEA 项目，重新复制并核对实际 URL |
-| 客户端仍只有旧工具 | 重新加载连接或重启客户端，确认 `tools/list` 为 19 项 |
+| 客户端仍只有旧工具 | 重新加载连接或重启客户端，确认原生 21 项及当前可用的官方目录 |
 | `INDEXING` / `DOCUMENTS_UNCOMMITTED` | 等待索引或编辑内容提交后重试 |
 | 项目或配置 ID 不匹配 | 重新列出项目和配置，使用完整路径和精确 ID |
 | `IDE_BUSY` | 等待 UI 恢复，先查列表中的 `activeOperationId`，避免盲目重启 |
@@ -321,7 +371,7 @@ POST 要求 `Content-Type: application/json` 和 `Accept: application/json, text
 
 ### Overview
 
-Version **0.4.0** targets **IntelliJ IDEA 2025.2 (252.*)** and uses Java 21. The plugin reuses IDEA's Java PSI, project indexes and Execution API to expose nineteen MCP tools.
+Version **0.6.8** targets **IntelliJ IDEA 2026.2.3 (262.10968.63)**, with a compatibility range of `262.10968.63`–`262.*`. It builds and tests with JDK 25 while retaining Java 21 language and bytecode compatibility. The original nineteen tools plus two operation-management tools are retained alongside available official providers: **56 + 21 = 77 tools** in the complete baseline environment. Availability depends on plugins, licensing, disabled tools and router settings.
 
 | Tool | Purpose | Required arguments |
 | --- | --- | --- |
@@ -344,12 +394,58 @@ Version **0.4.0** targets **IntelliJ IDEA 2025.2 (252.*)** and uses Java 21. The
 | `list_breakpoints` | List project Java line breakpoints and exact IDs | None |
 | `set_breakpoint` | Add, enable or disable a line breakpoint | `file`, `line` |
 | `remove_breakpoint` | Remove an exact Java line breakpoint | `breakpointId` |
+| `get_tool_operation` | Query an official long operation and its full final MCP result | `operationId` |
+| `cancel_tool_operation` | Request cancellation without undoing effects or stopping business processes | `operationId` |
 
-Every tool except `list_projects` accepts `project`. With multiple projects open, use the exact path returned by `list_projects`; omit it only when one project is open.
+Original project tools use `project`; added official tools use `projectPath`. The two new operation tools only require `operationId`. With multiple projects open, use the exact project path returned by `list_projects`.
+
+### Official coverage and automatic configuration
+
+Version 0.6.3 follows the [read-only performance design](docs/design/readonly-tool-performance.md): resolve only the requested schema and reuse its provider within that request, while checking current availability and schema again at execution. No results or authorizations are cached; official diagnostic, symbol-search and Git algorithms are retained. The [verification report](docs/verification/0.6.3-readonly-performance.md) separates thirteen production baselines, controlled measurements, the complete project-overview task and remaining limits. Small per-call savings are distinguished from combined-task improvements.
+
+The installed 0.6.3 [production verification](docs/verification/0.6.3-installed.md) confirms automatic connection and 77 discovered tools with successful calls. With balanced provider order, the full four-query overview median was 13 ms versus 14 ms for official MCP; file enumeration was 6 ms versus 215.5 ms. Earlier coupled single-task ordering has been corrected. Diagnostics and call hierarchy showed no substantial speedup; sandbox percentages must not be presented as production improvements.
+
+Version 0.6.1 fixes the installed adapter exposing only `execute_tool` from the official catalog and failing routed calls without a session handler. Discovery follows the IDE's direct/router mode; routing uses a real filtered official session and preserves expected tool errors. Default settings, routing and disabled tools have regression coverage. Users of 0.6.0 need to install the fix, restart the IDE and reload their client.
+
+Version 0.6.2 implements the [file enumeration design](docs/design/file-enumeration-optimization.md). For explicit directory paths, filename globs, `includeExcluded=false` and complete results below limit, `search_file` enumerates IDE content directories using official glob/exclusion semantics without caching file lists. Limits, complex scopes, budget exhaustion and routed calls retain the official implementation. Complete results have no ordering guarantee; truncated results retain the official prefix/order. The [equal-scope sandbox report](docs/verification/0.6.2-file-enumeration.md) covers all 48 source files, performance comparisons, 78 tests and actual discovery/enumeration through a temporary Codex client.
+
+After installing/reloading 0.6.2, [production verification](docs/verification/0.6.2-installed.md) confirmed 77 tools and successful calls. Through the current Codex connection, the same complete 48-file query measured a median of 7.5 ms for idea-java versus 191 ms for official MCP.
+
+Added tools cover official file/patch operations, search/call analysis, diagnostics/builds, refactoring/formatting, Run, terminal, thirteen debugger tools, inspection scripts/PSI, VCS and fourteen database tools. See the [complete design inventory](docs/design/jetbrains-parity-and-auto-connect.md) and the earlier [0.6.1 discovery/router validation](docs/verification/0.6.1.md). Added capabilities reuse IDE implementations in-process, while existing native APIs remain independent. A new native replacement requires equivalent results and a measured speed improvement.
+
+After installation, run **Tools → Java MCP: Auto-Configure Clients** and select one client to create or adopt its matching `idea-java` entry. Supported clients are Codex, Claude Code, Cursor, Windsurf and project-level VS Code / Copilot; Claude Desktop uses the bundled Java stdio bridge. Only selected clients are maintained across IDE restarts, port fallback and token changes. Reload the client after initial setup or tool upgrades. PasswordSafe remains the token source; memory-only credentials cannot establish automatic maintenance. JSON / JSONC merges preserve unknown fields but reformat the file and remove comments; malformed files or ownership conflicts are refused.
+
+Native tools work without the official MCP plugin. Added tools need the bundled MCP Server and their Terminal / Shell, Debugger MCP, Database Tools and SQL, VCS, Qodana / Ultimate providers. IDE disabled-tool, router and confirmation settings are respected; brave mode is never enabled automatically. Structured launch argument/environment fields are sanitized in `get_run_configurations` and router results. Official debugger evaluation and object expansion do not inherit native `read_debug_variables`'s no-evaluation guarantee.
+
+Long operations such as `execute_tool`, builds, run configurations, terminal commands, inspection scripts and SQL execution/preview/connection tests immediately return `operationId`. Poll `get_tool_operation`, checking `phase`, `error` and `result.isError`; final `result` preserves the full MCP result. Cancellation is a request. Tool descriptions identify the complete asynchronous set; other official calls have a 20-second wait limit.
 
 ### Install and connect
 
-1. Build the plugin or use the generated [0.4.0 distribution](build/distributions/idea-symbol-mcp-0.4.0.zip). Build artifacts are not included with the source.
+Version 0.6.7 follows the [second read-only performance design](docs/design/readonly-tool-performance-067.md) to optimize complete disk directory trees whose roots have at least 32 direct entries. Fresh NIO enumeration attributes preserve official sorting, indentation, depth and every node; thin roots, links/junctions, changes, errors or insufficient budgets retain official traversal. Git status is unchanged. See the [verification report](docs/verification/0.6.7-readonly-performance.md) for screening, equal-result same-layer benchmarks and installation boundaries. Production passed [0.6.7 installed verification](docs/verification/0.6.7-installed.md), with working automatic connection, 77 discovered tools and successful calls.
+
+Eighteen production tasks passed 1584 full-result checks. In two controlled sandbox runs with 80 samples per provider, the complete 4096-file tree reduced HTTP median by 40.6%–43.5% and P95 by 40.1%–43.7%. All 1328 full-tree comparisons, 107 JUnit tests, 94 protocol/HTTP assertions, external temporary Codex integration, build and structure checks passed. Cached thin roots only select official fallback; output always comes from complete disk traversal. Small trees have no claimed speedup, and uncached thin roots can still incur one eligibility probe.
+
+The [installed production directory benchmark](docs/verification/0.6.7-installed.md) passed 2001 complete checks. The controlled 4096-file fixture measured current Codex medians of 40/41 ms versus 58 ms for official MCP in both rounds; identical-client HTTP medians improved by 38.1%–38.7%. All 160 small-directory HTTP samples used official fallback, with eligibility P95 of 0.058–0.063 ms. The actual 55-entry wide root showed no stable gain and about 0.3 ms HTTP P95 regression. Controlled and natural workloads are reported separately; Git and runtime code are unchanged.
+
+Version 0.6.8 follows the [eligibility design](docs/design/directory-tree-qualification-068.md) and retains only the demonstrated directory-heavy shape improvement. Complete cached VFS data is used only for negative selection; the disk probe is bounded to 32 root names, four branches and 512 total names. Output still uses a complete traversal. File-count thresholds were withdrawn after unstable natural-tree gains and boundary regressions; natural-wide P95 is not claimed fixed. Git is unchanged. See [0.6.8 verification](docs/verification/0.6.8-directory-qualification.md) for two equal-result rounds against official and released 0.6.7 under one HTTP/RPC wrapper, the independent sandbox and installation boundaries.
+
+The [installed 0.6.8 production check](docs/verification/0.6.8-installed.md) confirms automatic connection, 77 discovered tools and successful calls, with 4008 complete-result checks. Directory-heavy trees select official traversal during qualification and perform close to direct official MCP. The 4096-file tree retains 36.7%–37.5% identical-client HTTP median gains; current Codex medians are 40 ms versus 57 ms in both rounds. Natural-wide gains remain unstable and HTTP P95 regression persists. Git implementation/settings and all 64 source/resource files are unchanged.
+
+Version 0.6.6 extends observation according to the [Git-command and HTTP-completion design](docs/design/git-command-and-http-completion.md); the [verification report](docs/verification/0.6.6-command-http.md) records complete results and performance limits. All 96 JUnit tests, 94 protocol/HTTP assertions, isolated sandbox, build and structure checks passed. No new execution candidate met the benefit gate; Default and the official Git implementation are retained.
+
+The earlier production instance passed [0.6.6 installed verification](docs/verification/0.6.6-installed.md): automatic connection, discovery of 77 tools, and native/official-router calls work. Fair benchmarks and a separate JFR diagnostic passed 1254 full-result checks for the complete 65-entry Git status and 14-node predecessor. With the same official predecessor before every Git sample, two rounds of 80 samples per provider measured P95 of 77.908/78.770 and 70.490/77.834 ms (idea-java/official). All 88 production completion events finished; all 86 Git samples including warmups matched their own events. In the slowest mixed sample of 73.320 ms, the provider took 70.899 ms, all other server work 1.853 ms, and the client residual 0.568 ms. No clear benefit gate was met; further optimization stops as requested, retaining 0.6.6.
+
+With `dev.ideamcp.timings` enabled, headers add HTTP task-queue, pre-handler and admission phases plus a numeric `X-Java-Mcp-Timing-Id`. The matching custom JFR event `dev.ideamcp.HttpRequestCompleted` records later send/close durations, which cannot be inserted into already-sent timing headers. Timing and recording are off by default. Events contain only fixed numeric fields and a completion flag, excluding arguments, tool names, paths, output and credentials; −1 means an unobserved phase. To record completions, run `scripts/record-http-timings.ps1 -IdeaProcessId <PID> -JdkHome <JDK25>` with the exact IDEA PID. It enables only the custom event in `scripts/http-timing.jfc`. Git command probes and wait-stack recordings remain confined to the independent sandbox and are excluded from the production plugin.
+
+The [full 0.6.5 verification](docs/verification/0.6.5-fixed-load.md) passed **92 JUnit tests, 94 protocol/HTTP assertions**, build and structure checks. With the same predecessor before every Git sample, the earlier large P95 gap did not recur. Sandbox slow samples were dominated by the Git command interval; the IO dispatcher candidate failed the benefit gate, so runtime calls retain Default and the official implementation.
+
+Version 0.6.5 follows the [mixed-task tail-latency design](docs/design/mixed-git-tail-latency.md) and adds opt-in HTTP phase timings, disabled by default. For diagnostics, add `-Ddev.ideamcp.timings=true` to IDEA's custom VM options and restart IDEA. Authenticated responses include `Server-Timing` with fixed phase names and milliseconds, while response bodies and tool catalogs remain unchanged. Arguments, paths, credentials and business output are not recorded. Fields ending in `*_total` overlap their child phases; do not sum every field. Headers exclude subsequent response sending, and asynchronous operations measure submission only. Git process listeners are confined to sandbox tests. See the [0.6.5 verification](docs/verification/0.6.5-fixed-load.md) for fixed-predecessor production measurements and candidate gates.
+
+Earlier [0.6.5 installed verification](docs/verification/0.6.5-installed.md) confirmed the production instance was **0.6.5**, with working automatic connection, discovery of 77 tools, and native/official-router calls. With the same predecessor before every Git sample, all 830 full-result checks matched for the complete 56-entry single-root status and 14-node call tree. Each of the three conditions used 80 Git samples per provider; P95 was 73/72, 89/87 and 78/80 ms (idea-java/official). No consistent speedup was observed, and individual slow samples remain. Those measurements had phase timings disabled. Subsequently, the VM option was added and IDEA was restarted normally at the user's request; production Git queries now return phase timings, with the complete 57-entry result matching official MCP. The subsequent [production phase benchmarks](docs/verification/0.6.5-production-phases.md) passed 2490 full-result checks across current Codex comparisons and two same-client HTTP runs. HTTP initial-dispatch P95 was 0.034–0.064 ms; the provider accounted for 159.904 ms of the largest 177.605 ms sample, while uncovered P95 was about 17 ms under fixed predecessors. Recommendations prioritize finer provider and uncovered-cost measurements while retaining Default and the official Git path.
+
+Version 0.6.4 follows the [call-tree and Git performance design](docs/design/call-tree-and-git-performance.md): bounded parallel scheduling for 2–4 independent Git roots inside the project, while retaining the current official provider's status commands, parsing, filters, counters, ordering and limits. Cancellation shares the outer 20-second query budget. Single roots, explicit selections, nested/external roots and unsupported cases retain the official path. Binary process reading failed the benefit threshold, and call-tree candidate searches cannot safely be omitted; both remain unchanged. See the [0.6.4 verification](docs/verification/0.6.4-query-performance.md) for full-result comparisons, tail latency and installation limits. The installed [production verification](docs/verification/0.6.4-installed.md) confirms 0.6.4 automatic connection and 77 tools. The complete 14-node tree and 49-entry single-root status match official MCP. Separate-task medians were 561/581 ms and 62/64 ms (idea-java/official); mixed-task Git P95 was 103/69 ms. Both runs are retained. Multi-root sandbox gains do not apply to this single-root project.
+
+1. Build the plugin or use the generated [0.6.8 distribution](build/distributions/idea-symbol-mcp-0.6.8.zip). Build artifacts are not included with the source.
 2. Select **Settings → Plugins → gear → Install Plugin from Disk** in IDEA, choose the ZIP and follow any restart prompt.
 3. Open a Java project and run **Tools → Java MCP: Copy Connection Configuration** in the main window. Alternatively, press Shift twice and search for the action.
 4. Add the copied configuration to a Streamable HTTP MCP client. Wait for indexing before index-dependent queries.
@@ -556,26 +652,27 @@ Example Codex requests: “list this project's run configurations,” “restart
 
 ### Build and test
 
-Use a complete **JDK 21**, including javac. Example local PowerShell setup:
+Use a complete **JDK 25**, including javac, to read the 262 platform's Java 25 API classes. Plugin sources and bytecode remain at Java 21 (`--release 21`); tests run on the IDE's matching JBR 25. Example local PowerShell setup:
 
 ```powershell
-$env:IDEA_HOME = 'D:\Program Files\JetBrains\IntelliJ IDEA 2025.2'
-# JAVA_HOME must point to a complete JDK 21
+$env:IDEA_HOME = 'D:\Program Files\JetBrains\IntelliJ IDEA 2026.2.3'
+$env:JAVA_HOME = Join-Path $env:IDEA_HOME 'jbr' # must include javac
 .\gradlew.bat "-PlocalIdePath=$env:IDEA_HOME" test buildPlugin verifyPluginStructure
 .\gradlew.bat "-PlocalIdePath=$env:IDEA_HOME" runIde
 ```
 
-The Wrapper pins Gradle 9.0.0 and its distribution SHA-256; the IntelliJ Platform Gradle Plugin is 2.18.1. Initial builds download Gradle and dependencies. Omitting `localIdePath` downloads IDEA 2025.2. On macOS / Linux use `sh ./gradlew`; the local PowerShell packaging script targets Windows.
+The Wrapper pins Gradle 9.1.0, which supports Java 25, and its distribution SHA-256; the IntelliJ Platform Gradle Plugin is 2.18.1. Initial builds download Gradle and dependencies. Omitting `localIdePath` downloads IDEA 2026.2.3. If Gradle runs on another supported JDK and cannot detect JDK 25, Foojay toolchain resolver 1.0.0 downloads it automatically; set `JAVA_HOME` to the IDE's JBR 25 to reuse the local runtime. On macOS / Linux use `sh ./gradlew`; the local PowerShell packaging script targets Windows.
 
-Compile against local IDEA JARs without downloading Gradle or an SDK:
+Compile against local IDEA JARs. Prepare the TOML runtime dependencies once; the local script then works offline:
 
 ```powershell
+.\gradlew.bat "-PlocalIdePath=$env:IDEA_HOME" prepareLocalDependencies
 .\scripts\build-local.ps1 -IdeaHome $env:IDEA_HOME -JdkHome $env:JAVA_HOME
 .\scripts\build-local.ps1 -IdeaHome $env:IDEA_HOME -JdkHome $env:JAVA_HOME -Test
 .\scripts\build-local.ps1 -IdeaHome $env:IDEA_HOME -JdkHome $env:JAVA_HOME -PsiTest
 ```
 
-`-Test` runs protocol / HTTP checks. `-PsiTest` adds PSI, token and Run / Debug integration tests, requiring JUnit 4.13.2, Hamcrest Core 1.3 and OpenTest4j 1.3.0. JARs default to the user's Maven cache; override with `-JUnitJar`, `-HamcrestJar` and `-OpenTest4jJar`. Without `-JdkHome`, the script tries `JAVA_HOME`, then IDEA's `jbr`; the selected runtime must contain the required JDK tools.
+First use `prepareLocalDependencies` to prepare tomlj and its runtime dependencies. Afterwards `-Test` runs protocol / HTTP checks without Gradle. Because 262 distributions do not bundle the complete test framework, `-PsiTest` delegates to Gradle `test` for isolated sandbox tests. Without `-JdkHome`, the script tries `JAVA_HOME`, then IDEA's `jbr`.
 
 Use offline Gradle only after Gradle and dependencies are cached, or run a specific test class:
 
@@ -586,7 +683,9 @@ Use offline Gradle only after Gradle and dependencies are cached, or run a speci
 
 Distribution: `build/distributions/idea-symbol-mcp-<version>.zip`. Test report: `build/reports/tests/test/index.html`. Tests use isolated IDEA sandboxes; execution tests start and clean up their own disposable JVMs. Windows testing requires access to IDEA's native process-management libraries.
 
-The latest 0.4.0 regression passed **49 JUnit tests**, with **94 protocol assertions** and plugin structure verification. Coverage includes real JVM Run / Debug and logs, isolation between two disposable debug JVMs, threads/frames/locals, stale pause tokens, all three step actions and resume/pause, breakpoint lifecycle, log isolation/eviction, errors/warnings and unsaved fixes, static calls, and complete pagination of 481 references and 241 call sites. The test sandbox disables the unrelated Run console performance monitor and restores its setting at fixture disposal, without modifying the user's IDE.
+The [final 0.6.4 verification](docs/verification/0.6.4-query-performance.md) passed **87 JUnit tests, 94 protocol/HTTP assertions**, plugin build and structure checks. Two controlled direct runs and the HTTP multi-root comparison met the benefit threshold with complete results; single-root fallback showed no material overhead. Call hierarchy retains the official implementation. The [installed verification](docs/verification/0.6.4-installed.md) confirms production 0.6.4, working tools and complete matching results; single-root Git and call hierarchy show no substantial speedup.
+
+On 2026-10-24, the full 0.6.3 regression passed **83 JUnit tests**, with **94 protocol assertions** and `buildPlugin verifyPluginStructure`, using **IDEA 2026.2.3 / IU-262.10968.63, JBR 25.0.4 and Gradle 9.1.0**. Coverage includes real JVM Run / Debug and logs, isolation between two disposable debug JVMs, threads/frames/locals, stale pause tokens, all three step actions and resume/pause, breakpoint lifecycle, log isolation/eviction, errors/warnings and unsaved fixes, static calls, and complete pagination of 481 references and 241 call sites. Tests use separate config, system and log directories and clean up their disposable JVMs, without modifying the user's IDE.
 
 Run read-only connectivity checks against an installed plugin:
 
@@ -604,21 +703,22 @@ $env:IDEA_MCP_TOKEN = '<YOUR_TOKEN_WITHOUT_BEARER_PREFIX>'
 | `IdeaToolBackend` | Query routing and EDT execution requests; five-second submission / query wait |
 | `JavaCodeTools` | Background non-blocking PSI reads; 20-second wait limit |
 | `JavaCallTools` / `DiagnosticsTools` | Static call edges and background single-file error/warning analysis |
+| `FileEnumeration` | Bounded, uncached complete directory enumeration with official-search fallback |
 | `RunControlService` | Project-scoped state machine, process termination and debugger tracking |
 | `RunLogService` / `RunLogBuffer` | Project execution-event capture, isolated instances and bounded log cursors |
 | `DebugService` | EDT coordination, manager-thread JDI reads, suspension tokens, breakpoints and stepping |
 | `TokenStore` / `*Action` | PasswordSafe credentials and IDEA menu actions |
 | `protocol/` | Schemas, validation, JSON-RPC and HTTP authentication boundaries |
 
-The listener is loopback-only, validates Host / Origin and requires Bearer authentication. It implements a stateless Streamable HTTP subset for `2025-03-26`, `2025-06-18` and `2025-11-25`: `initialize`, initialization notifications, `ping`, `tools/list` and `tools/call`. Responses use JSON; GET / DELETE return 405. There is no SSE push, stdio, resource API or protocol-level MCP task API. Restart IDs are an application-level tool convention.
+The listener is loopback-only, validates Host / Origin and requires Bearer authentication. It implements a stateless Streamable HTTP subset for `2025-03-26`, `2025-06-18` and `2025-11-25`: `initialize`, initialization notifications, `ping`, `tools/list` and `tools/call`. Responses use JSON; GET / DELETE return 405. There is no SSE push, resource API or protocol-level MCP task API; stdio clients use the separate bridge process. Restart IDs are an application-level tool convention.
 
-POST requires `Content-Type: application/json` and `Accept: application/json, text/event-stream`, with a 1 MiB body limit. Only local IDEA 2025.2 is verified; other releases, Remote Development and split frontend / backend setups remain unverified.
+POST requires `Content-Type: application/json` and `Accept: application/json, text/event-stream`, with a 1 MiB body limit. Version 0.6.8 targets local IDEA 2026.2.3; other releases, Remote Development and split frontend / backend setups remain unverified. Use the older 0.4.0 release for IDEA 2025.2.
 
 | Symptom | Action |
 | --- | --- |
 | HTTP 401 | Check the token; copy current settings or save the client's existing token as a fixed value |
 | Connection failure or changed port | Open an IDEA project and copy the actual URL again |
-| Client exposes only older tools | Reload or restart the client; confirm `tools/list` returns nineteen tools |
+| Client exposes only older tools | Reload or restart the client; confirm the 21 native tools plus the available official catalog |
 | `INDEXING` / `DOCUMENTS_UNCOMMITTED` | Retry after indexing or editor-to-PSI commits finish |
 | Project or configuration ID mismatch | List projects and configurations again, using exact paths and IDs |
 | `IDE_BUSY` | Wait for the UI and inspect `activeOperationId` before retrying a restart |

@@ -1,16 +1,24 @@
 <idea-plugin>
     <id>dev.ideamcp.symbols</id>
     <name>Java Symbol MCP</name>
-    <version>0.4.0</version>
+    <version>0.6.8</version>
     <vendor>IDEA MCP</vendor>
     <description><![CDATA[Read Java symbols, definitions, references, call sites, IDEA diagnostics and captured runtime logs, and restart existing local service configurations in Run or Debug mode through a local MCP endpoint.]]></description>
-    <idea-version since-build="252" until-build="252.*"/>
+    <idea-version since-build="262.10968.63" until-build="262.*"/>
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.java</depends>
+    <depends optional="true" config-file="git-tools.xml">Git4Idea</depends>
+    <depends optional="true" config-file="platform-tools.xml">com.intellij.mcpServer</depends>
+    <extensionPoints>
+        <extensionPoint name="platformTools" interface="dev.ideamcp.PlatformToolProvider" dynamic="true"/>
+    </extensionPoints>
     <extensions defaultExtensionNs="com.intellij">
         <postStartupActivity implementation="dev.ideamcp.IdeaMcpStartup"/>
     </extensions>
     <actions>
+        <action id="IdeaMcp.AutoConfigureClients" class="dev.ideamcp.AutoConfigureClientsAction" text="Java MCP: Auto-Configure Clients">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
         <action id="IdeaMcp.Connection" class="dev.ideamcp.ConnectionAction" text="Java MCP: Copy Connection Configuration" description="Start the local server and copy its MCP connection configuration">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>

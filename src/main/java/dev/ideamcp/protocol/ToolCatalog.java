@@ -5,7 +5,7 @@ import java.util.Set;
 import static dev.ideamcp.protocol.Json.object;
 
 public final class ToolCatalog {
-    public static final Set<String> NAMES = Set.of("list_projects", "read_symbols", "find_definition", "find_references", "list_run_configurations", "restart_run_configuration", "get_run_operation", "read_run_logs", "get_diagnostics", "find_callers", "find_callees", "list_debug_sessions", "read_debug_threads", "read_debug_stack", "read_debug_variables", "control_debugger", "list_breakpoints", "set_breakpoint", "remove_breakpoint");
+    public static final Set<String> NAMES = Set.of("list_projects", "read_symbols", "find_definition", "find_references", "list_run_configurations", "restart_run_configuration", "get_run_operation", "read_run_logs", "get_diagnostics", "find_callers", "find_callees", "list_debug_sessions", "read_debug_threads", "read_debug_stack", "read_debug_variables", "control_debugger", "list_breakpoints", "set_breakpoint", "remove_breakpoint", "get_tool_operation", "cancel_tool_operation");
     private ToolCatalog() {}
     public static JsonArray tools() {
         JsonArray tools = new JsonArray();
@@ -76,6 +76,9 @@ public final class ToolCatalog {
         tools.add(tool("set_breakpoint", "Add or enable/disable a project-wide Java line breakpoint at an executable source line. Existing conditions, log expressions and suspend policies are preserved. Invoke only when the user requests this breakpoint change. New breakpoints persist in IDEA and can suspend matching business sessions; no expression/condition evaluation is provided.", breakpoint, new String[]{"file", "line"}));
         JsonObject remove = common.deepCopy();remove.add("breakpointId", string("Exact breakpointId from list_breakpoints in the same project."));
         tools.add(tool("remove_breakpoint", "Remove exactly one project-wide Java line breakpoint identified by breakpointId. Invoke only when the user requests removing that breakpoint. Does not remove other breakpoints or resume a suspended process.", remove, new String[]{"breakpointId"}));
+        JsonObject platformOperation = object("operationId", string("Exact operationId returned by a long-running platform tool, in this IDE instance."));
+        tools.add(tool("get_tool_operation", "Poll an asynchronous platform tool. Inspect phase, inProgress, error and the final result.isError. Completion does not imply application health.", platformOperation.deepCopy(), new String[]{"operationId"}));
+        tools.add(tool("cancel_tool_operation", "Request cancellation of one asynchronous platform task. Does not undo completed effects, stop business processes or guarantee immediate cancellation. Invoke only for a user-requested cancellation; keep polling the same operation.", platformOperation, new String[]{"operationId"}));
         return tools;
     }
     private static JsonObject string(String description) { return object("type", "string", "minLength", 1, "description", description); }
@@ -89,7 +92,7 @@ public final class ToolCatalog {
         if (name.equals("control_debugger")) schema.add("oneOf", Json.GSON.toJsonTree(new Object[]{
                 object("properties",object("action",object("const","pause")),"not",object("required",new String[]{"pauseId"})),
                 object("properties",object("action",object("enum",new String[]{"resume","step_into","step_over","step_out"})),"required",new String[]{"pauseId"})}));
-        boolean mutation = Set.of("restart_run_configuration", "control_debugger", "set_breakpoint", "remove_breakpoint").contains(name);
+        boolean mutation = Set.of("restart_run_configuration", "control_debugger", "set_breakpoint", "remove_breakpoint", "cancel_tool_operation").contains(name);
         return object("name", name, "description", description, "inputSchema", schema,
                 "annotations", object("readOnlyHint", !mutation, "destructiveHint", mutation, "idempotentHint", !mutation, "openWorldHint", mutation));
     }

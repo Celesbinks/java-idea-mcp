@@ -40,7 +40,7 @@ final class TokenStore {
         return token;
     }
     boolean isPersistent() { return !memoryOnly.getAsBoolean(); }
-    private static void validate(String token) {
+    static void validate(String token) {
         if (token == null || !token.matches("[A-Za-z0-9_-]{32,256}"))
             throw new IllegalArgumentException("Token must contain 32-256 letters, digits, underscores or hyphens, without the Bearer prefix.");
     }

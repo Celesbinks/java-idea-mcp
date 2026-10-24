@@ -19,10 +19,17 @@ public final class McpHttpServer implements AutoCloseable {
     private final ExecutorService executor;
     private final byte[] authorization;
     private final RpcHandler rpc;
+    private final boolean timings;
+    private record TaskClock(long queued, long started) {}
+    private static final ThreadLocal<TaskClock> TASK = new ThreadLocal<>();
 
     public McpHttpServer(int port, String token, RpcHandler rpc) throws IOException {
+        this(port, token, rpc, Boolean.getBoolean("dev.ideamcp.timings"));
+    }
+    public McpHttpServer(int port, String token, RpcHandler rpc, boolean timings) throws IOException {
         if (token == null || token.length() < 32) throw new IllegalArgumentException("A strong bearer token is required");
         this.rpc = rpc;
+        this.timings = timings;
         authorization = ("Bearer " + token).getBytes(StandardCharsets.UTF_8);
         server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 16);
         executor = new ThreadPoolExecutor(2, 4, 30, TimeUnit.SECONDS, new ArrayBlockingQueue<>(32), runnable -> {
@@ -30,15 +37,27 @@ public final class McpHttpServer implements AutoCloseable {
             thread.setDaemon(true);
             return thread;
         }, new ThreadPoolExecutor.AbortPolicy());
-        server.setExecutor(executor);
+        server.setExecutor(timings ? this::executeTimed : executor);
         server.createContext("/mcp", this::handle);
     }
     public void start() { server.start(); }
     public int port() { return server.getAddress().getPort(); }
     public String url() { return "http://127.0.0.1:" + port() + "/mcp"; }
+    private void executeTimed(Runnable task) {
+        long queued = System.nanoTime();
+        executor.execute(() -> {
+            TaskClock previous = TASK.get();
+            TASK.set(new TaskClock(queued, System.nanoTime()));
+            try { task.run(); }
+            finally { if (previous == null) TASK.remove(); else TASK.set(previous); }
+        });
+    }
 
     private void handle(HttpExchange exchange) throws IOException {
-        try (exchange) {
+        long entered = timings ? System.nanoTime() : 0;
+        QueryTiming.Context context = null;
+        TaskClock task = timings ? TASK.get() : null;
+        try {
             if (!exchange.getRequestURI().getPath().equals("/mcp") || exchange.getRequestURI().getRawQuery() != null) { send(exchange, 404, null); return; }
             String host = exchange.getRequestHeaders().getFirst("Host");
             if (!allowedAuthority(host)) { send(exchange, 403, null); return; }
@@ -61,10 +80,20 @@ public final class McpHttpServer implements AutoCloseable {
             if (version != null && !RpcHandler.VERSIONS.contains(version)) {
                 send(exchange, 400, RpcHandler.error(null, -32600, "Unsupported MCP-Protocol-Version")); return;
             }
-            byte[] bytes = exchange.getRequestBody().readNBytes(MAX_BODY + 1);
+            try (var timing = QueryTiming.open(timings)) {
+            context = QueryTiming.current();
+            if (context != null) {
+                QueryTiming.record(context, "http_admission", System.nanoTime() - entered);
+                if (task != null) {
+                    QueryTiming.record(context, "http_executor_wait", task.started - task.queued);
+                    QueryTiming.record(context, "http_task_to_handler", entered - task.started);
+                }
+            }
+            byte[] bytes;
+            try (var phase = QueryTiming.phase("http_read")) { bytes = exchange.getRequestBody().readNBytes(MAX_BODY + 1); }
             if (bytes.length > MAX_BODY) { send(exchange, 413, null); return; }
             JsonElement input;
-            try {
+            try (var phase = QueryTiming.phase("http_parse")) {
                 String json = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
                 JsonReader reader = new JsonReader(new StringReader(json));
                 reader.setStrictness(Strictness.STRICT);
@@ -73,8 +102,14 @@ public final class McpHttpServer implements AutoCloseable {
             } catch (JsonParseException | IOException e) {
                 send(exchange, 400, RpcHandler.error(null, -32700, "Invalid JSON")); return;
             }
-            JsonObject response = rpc.handle(input);
+            JsonObject response;
+            try (var phase = QueryTiming.phase("rpc_total")) { response = rpc.handle(input); }
             send(exchange, response == null ? 202 : 200, response);
+            }
+        } finally {
+            boolean closed = false;
+            try (var phase = QueryTiming.phase(context, "http_close")) { exchange.close(); closed = true; }
+            finally { HttpTimingEvent.publish(context, entered, task == null ? 0 : task.queued, closed); }
         }
     }
     private boolean allowedAuthority(String authority) {
@@ -88,13 +123,21 @@ public final class McpHttpServer implements AutoCloseable {
         } catch (IllegalArgumentException e) { return false; }
     }
     private static void send(HttpExchange exchange, int status, JsonObject body) throws IOException {
-        exchange.getResponseHeaders().set("Cache-Control", "no-store");
-        exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
-        if (body == null) { exchange.sendResponseHeaders(status, -1); return; }
-        byte[] bytes = Json.GSON.toJson(body).getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-        exchange.sendResponseHeaders(status, bytes.length);
-        exchange.getResponseBody().write(bytes);
+        byte[] bytes = null;
+        if (body != null) try (var phase = QueryTiming.phase("http_serialize")) { bytes = Json.GSON.toJson(body).getBytes(StandardCharsets.UTF_8); }
+        QueryTiming.Context timing = QueryTiming.current();
+        try (var phase = QueryTiming.phase("http_headers_prepare")) {
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+            if (timing != null) {
+                exchange.getResponseHeaders().set("Server-Timing", timing.header());
+                exchange.getResponseHeaders().set("X-Java-Mcp-Timing-Id", Long.toString(timing.id()));
+            }
+            if (bytes != null) exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+        }
+        try (var phase = QueryTiming.phase("http_send_headers")) { exchange.sendResponseHeaders(status, bytes == null ? -1 : bytes.length); }
+        if (bytes != null) try (var phase = QueryTiming.phase("http_write_body")) { exchange.getResponseBody().write(bytes); }
+        if (timing != null) timing.responseWritten();
     }
     @Override public void close() {
         server.stop(0);

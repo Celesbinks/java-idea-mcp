@@ -1,0 +1,5 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="dev.ideamcp.symbols">
+        <platformTools implementation="dev.ideamcp.OfficialMcpAdapter"/>
+    </extensions>
+</idea-plugin>
