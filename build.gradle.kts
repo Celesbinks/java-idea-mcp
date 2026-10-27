@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "dev.ideamcp"
-version = "0.6.8"
+version = "0.6.10"
 
 repositories {
     mavenCentral()
@@ -43,6 +43,8 @@ tasks.withType<JavaCompile>().configureEach {
     options.release = 21
 }
 tasks.test {
+    // Exercise the real async editor-save boundary, including delayed write regressions.
+    systemProperty("vfs.async-content-write.enabled", "true")
     systemProperty("idea.mcp.test.rg", providers.gradleProperty("rgExecutable").orElse("").get())
     systemProperty("idea.mcp.test.directoryBenchmark", providers.gradleProperty("directoryBenchmark").orElse("false").get())
     systemProperty("idea.mcp.test.directoryQualificationBenchmark", providers.gradleProperty("directoryQualificationBenchmark").orElse("false").get())

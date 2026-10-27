@@ -51,10 +51,10 @@ public final class OfficialMcpAdapter implements PlatformToolProvider {
         this.treeQuery = Objects.requireNonNull(treeQuery);
     }
     private static final AtomicInteger CALL_IDS = new AtomicInteger();
-    private static final Implementation CLIENT = new Implementation("java-symbol-mcp", "0.6.8", null, null, null);
+    private static final Implementation CLIENT = new Implementation("java-symbol-mcp", "0.6.10", null, null, null);
     private static final McpServerService.McpSessionOptions SESSION = new McpServerService.McpSessionOptions(
             McpServerService.AskCommandExecutionMode.RESPECT_GLOBAL_SETTINGS, null, null, null, McpElicitationKind.IDE);
-    private static final Set<String> EXPLICIT_EFFECTS = Set.of("execute_tool", "xdebug_evaluate_expression", "xdebug_set_variable", "xdebug_get_frame_values", "xdebug_get_value_by_path", "run_inspection_kts", "execute_sql_query");
+    private static final Set<String> EXPLICIT_EFFECTS = Set.of("create_new_file", "apply_patch", "reformat_file", "rename_refactoring", "execute_tool", "xdebug_evaluate_expression", "xdebug_set_variable", "xdebug_get_frame_values", "xdebug_get_value_by_path", "run_inspection_kts", "execute_sql_query");
     private static final Set<String> SENSITIVE_LAUNCH_FIELDS = Set.of("commandLine", "environment", "programArguments", "envs", "environmentVariables", "vmParameters", "vmOptions", "launchCommandLine");
 
     private List<McpTool> available() {
@@ -121,6 +121,8 @@ public final class OfficialMcpAdapter implements PlatformToolProvider {
         String description = d.getDescription();
         if (PlatformOperationService.LONG_TOOLS.contains(d.getName()))
             description += " This endpoint submits this tool asynchronously and returns operationId. Poll get_tool_operation for the final full MCP result; do not retry the operation on a pending status.";
+        if (EditorWriteBoundary.tracked(d.getName()))
+            description += " Editor work has no hard mid-edit query timeout. Poll the same operation through saving/flushing/verifying; deadlineExceeded does not mean stopped. For file edits require editorWrite.status=persisted; incomplete requires reconciliation. not_observed means no IDE file events were tracked, not that external commands made no writes. Cancellation after start is deferred until a safe boundary; it does not undo edits. Do not mix local disk patches with concurrent IDE edits.";
         if (d.getName().startsWith("xdebug_"))
             description += " Official debugger semantics may evaluate expressions or use IDE renderers. Use read_debug_variables for raw JDI values without evaluation. Debugger mutations require an explicit user request.";
         if (d.getName().equals("get_run_configurations"))
@@ -166,6 +168,8 @@ public final class OfficialMcpAdapter implements PlatformToolProvider {
             try (var phase = QueryTiming.phase("adapter_tree_total")) { complete = treeQuery.call(project, arguments, deadline); }
             if (complete != null) return complete;
         }
+        try (EditorWriteBoundary boundary = EditorWriteBoundary.tracked(name)
+                ? new EditorWriteBoundary(project, name, arguments, editorTargets(tool, project, name, arguments)) : null) {
         kotlinx.serialization.json.JsonObject json;
         McpCallInfo info;
         CoroutineContext context;
@@ -173,9 +177,10 @@ public final class OfficialMcpAdapter implements PlatformToolProvider {
         try (var phase = QueryTiming.phase("adapter_context")) {
         json = (kotlinx.serialization.json.JsonObject) kotlinx.serialization.json.Json.Default.parseToJsonElement(arguments.toString());
         var empty = (kotlinx.serialization.json.JsonObject) kotlinx.serialization.json.Json.Default.parseToJsonElement("{}");
-        info = new McpCallInfo(CALL_IDS.incrementAndGet(), new ClientInfo("java-symbol-mcp", "0.6.8"), project, tool.getDescriptor(), json, empty, SESSION, Map.of(), null);
+        info = new McpCallInfo(CALL_IDS.incrementAndGet(), new ClientInfo("java-symbol-mcp", "0.6.10"), project, tool.getDescriptor(), json, empty, SESSION, Map.of(), null);
         context = (officialGit ? gitDispatcher : Dispatchers.getDefault()).plus(new McpCallAdditionalDataElement(info));
         if (timing != null) context = context.plus(new TimingElement(timing));
+        if (boundary != null) context = context.plus(boundary.context());
         }
         long timeout = PlatformOperationService.LONG_TOOLS.contains(name) ? 600_000L
                 : Math.max(1, java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
@@ -188,7 +193,10 @@ public final class OfficialMcpAdapter implements PlatformToolProvider {
                 result = BuildersKt.runBlocking(context, (scope, continuation) -> {
                     queued.close();
                     if (provider != null) provider.set(QueryTiming.phase(timing, "adapter_provider_total"));
-                    return TimeoutKt.withTimeout(timeout, (inner, next) -> tool.call(json, next), continuation);
+                    // Cancellation in the gap between editing and save is unsafe. The
+                    // operation remains queryable; an advisory deadline is not a stop.
+                    return boundary != null ? tool.call(json, continuation)
+                            : TimeoutKt.withTimeout(timeout, (inner, next) -> tool.call(json, next), continuation);
                 });
             } finally {
                 queued.close();
@@ -198,7 +206,12 @@ public final class OfficialMcpAdapter implements PlatformToolProvider {
             JsonObject response = object("content", new Object[]{object("type", "text", "text", expected.getMcpErrorText())}, "isError", true);
             if (expected.getMcpErrorStructureContent() != null)
                 response.add("structuredContent", JsonParser.parseString(expected.getMcpErrorStructureContent().toString()));
-            return name.equals("execute_tool") ? redactRouterResult(response) : name.equals("get_run_configurations") ? redactLaunchFields(response) : response;
+            response = name.equals("execute_tool") ? redactRouterResult(response) : name.equals("get_run_configurations") ? redactLaunchFields(response) : response;
+            return boundary == null ? response : EditorWriteBoundary.attach(response, boundary.finish(false));
+        } catch (Exception failure) {
+            if (boundary == null) throw failure;
+            JsonObject response = object("content", new Object[]{object("type", "text", "text", "Editor operation failed: " + failure.getClass().getSimpleName())}, "isError", true);
+            return EditorWriteBoundary.attach(response, boundary.finish(false));
         }
         try (var phase = QueryTiming.phase("adapter_result")) {
         JsonArray content = new JsonArray();
@@ -210,7 +223,33 @@ public final class OfficialMcpAdapter implements PlatformToolProvider {
         JsonObject response = object("content", content, "isError", result.isError());
         if (result.getStructuredContent() != null)
             response.add("structuredContent", JsonParser.parseString(result.getStructuredContent().toString()));
-        return name.equals("get_run_configurations") ? redactLaunchFields(response) : name.equals("execute_tool") ? redactRouterResult(response) : response;
+        response = name.equals("get_run_configurations") ? redactLaunchFields(response) : name.equals("execute_tool") ? redactRouterResult(response) : response;
+        return boundary == null ? response : EditorWriteBoundary.attach(response, boundary.finish(!result.isError()));
+        }
+        }
+    }
+
+    /** Reuse the provider's path/patch parser; malformed inputs still reach its own error handling. */
+    private static List<java.nio.file.Path> editorTargets(McpTool tool, Project project, String name, JsonObject args) {
+        if (!tool.getDescriptor().getFullyQualifiedName().startsWith("com.intellij.mcpserver.toolsets.general.")) return List.of();
+        try {
+            List<String> paths = new ArrayList<>();
+            if (name.equals("create_new_file") || name.equals("rename_refactoring")) paths.add(Arguments.required(args, "pathInProject"));
+            if (name.equals("reformat_file")) for (var path : args.getAsJsonArray("files")) paths.add(path.getAsString());
+            if (name.equals("apply_patch")) {
+                var parser = com.intellij.mcpserver.toolsets.general.PatchApplyEngine.INSTANCE;
+                for (var operation : parser.parsePatch(parser.extractPatchText(Arguments.string(args,"input",null),Arguments.string(args,"inputFormat",null)))) {
+                    paths.add(operation.getPath());
+                    if (operation instanceof com.intellij.mcpserver.toolsets.general.UpdatePatchOperation update && update.getMoveTo() != null) paths.add(update.getMoveTo());
+                }
+            }
+            List<java.nio.file.Path> targets = new ArrayList<>();
+            for (String path : paths) targets.add(com.intellij.mcpserver.util.Fs_utilKt.resolveInProject(project,path,false).toAbsolutePath().normalize());
+            return targets;
+        } catch (Exception invalid) {
+            // Never inspect a target rejected by the official resolver. Preserve the
+            // provider's original diagnostic rather than inventing parser semantics.
+            return List.of();
         }
     }
 

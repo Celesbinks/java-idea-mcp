@@ -5,7 +5,7 @@
 ## 项目与技术栈
 
 - Java Symbol MCP 是 IntelliJ IDEA 插件，复用正在运行的 IDE 的 Java PSI、项目索引和 Execution API。
-- 当前版本 `0.6.8`；目标为 IDEA `2026.2.3` / `262.10968.63`～`262.*`，Java 21 语言级别和字节码，使用 JDK 25 编译和测试。
+- 当前版本 `0.6.10`；目标为 IDEA `2026.2.3` / `262.10968.63`～`262.*`，Java 21 语言级别和字节码，使用 JDK 25 编译和测试。
 - 使用 Gradle 9.1.0 Wrapper、IntelliJ Platform Gradle Plugin 2.18.1、JUnit 4。
 - 插件 ID：`dev.ideamcp.symbols`；显示名称：`Java Symbol MCP`。
 - 本机 MCP 地址默认为 `http://127.0.0.1:64123/mcp`，使用 Bearer 认证。
@@ -23,6 +23,7 @@
 | `GitStatusBatch.java` | 2～4 个项目内独立 Git 根的有界并行官方查询；共享预算、快照校验、复杂范围回退 |
 | `protocol/QueryTiming.java` / `protocol/HttpTimingEvent.java` | 默认关闭的请求内计时；认证响应头与可选 JFR 完成事件按数值序号关联，不存参数或输出 |
 | `PlatformOperationService.java` | 官方长操作的异步提交、最终 MCP 结果和取消请求 |
+| `EditorWriteBoundary.java` / `EditorSaveVetoer.java` | 按调用上下文跟踪编辑、限制提供方保存范围、后台落盘与版本/磁盘核验；不保存无关文档或覆盖冲突 |
 | `ClientConfiguration.java` / `AutoClientService.java` | 客户端格式、原子合并、所有权摘要与后台连接配置维护 |
 | `protocol/StdioBridge.java` | Claude Desktop 所需的独立 stdio→认证 HTTP 桥接 |
 | `JavaCodeTools.java` | Java 符号、定义、引用、项目选择和位置转换 |
@@ -81,6 +82,14 @@
 - 栈和变量必须带当前 pauseId；继续、单步、退出或再次暂停后拒绝旧令牌。JDI 读取安排在 IDEA 调试器管理线程，禁止在 EDT 等待 VM 响应。
 - 局部变量只读取 JDI 原始值，不求值、不调用 getter / toString、不写变量、不展开对象。不要将真实调试变量或业务快照写入测试报告。服务卸载不恢复或停止调试进程，也不删除用户断点。
 
+### 源码编辑完成边界
+
+- 四个官方源码编辑工具（创建、补丁、格式化、重构）先返回操作 ID，查询同一个操作直到终态；检查最终 MCP 错误及 `editorWrite.status`，不能把提交、提示期限或取消请求当成已保存。
+- 编辑操作和潜在编辑的通用路由不使用 20 秒中途取消；只读查询仍保持现有上限。`deadlineExceeded` 仅提示等待较长；不要重提同一编辑。已开始的编辑取消须等当前提供方、保存与落盘核验结束，取消不代表回滚。
+- 只跟踪本次上下文中的文档/VFS 事件，保存仍由本次操作持有版本的文档。禁止全局保存、强制加载磁盘、抑制冲突后覆盖一方。显式目标已有未保存内容或磁盘冲突时拒绝；并发编辑、保存被否决或核验失败必须显式返回未完成。
+- 文件落盘等待和物理内容核验在后台进行，不持有写锁等待磁盘；保留编码/BOM/换行。仅存跟踪元数据，不记录源码内容；不把外部进程写盘纳入无证据的完成保证。
+- 反射延迟 VFS 调度、暂停格式化回调等故障注入仅用于独立测试 JVM，必须在 finally 恢复；不得在真实 IDEA 或业务项目注入。
+
 ## 构建和验证
 
 从项目根目录运行 PowerShell。`IDEA_HOME` 指向 IDEA 2026.2.3，`JAVA_HOME` 指向包含 javac 的完整 JDK 25（可用 IDEA 自带的 `jbr`）。262 平台 API 使用 Java 25 类文件；插件仍以 `--release 21` 编译。路径有空格时保持引号。
@@ -111,6 +120,8 @@
 | 调用链与诊断 | `JavaCallToolsTest` / `DiagnosticsToolsTest`：重载、构造器、Lambda、方法引用、调用分页、错误/警告及未保存修复 |
 | 日志 | `RunLogBufferTest` / `RunLogServiceTest`：游标、截断、UTF-16、标准输出类型、实例隔离、淘汰和监听清理 |
 | 令牌和生命周期 | `TokenPersistenceTest`：重建复用、令牌失效、保存失败、并发退出 |
+| 客户端自动配置 | `ClientConfigurationTest` / `CodexInlineHeadersTest` / `AutoClientServiceTest`：内联/独立请求头、Unicode、原文保留、幂等性、所有权和临时配置中的后台轮换 |
+| 编辑保存与落盘 | `EditorPersistenceTest` / `PlatformOperationServiceTest`：真实提供方、延迟写盘、超过旧 20 秒限制、取消/卸载、路由、编码/BOM、无关未保存文档、并发/磁盘冲突与物理路径一致性 |
 | 运行控制 | `RunControlServiceTest`：真实临时 JVM 的 Run / Debug、超时和事件隔离 |
 | 调试现场与断点 | `DebugServiceTest` / `DebugValueTest`：两台临时 JVM 的会话隔离、暂停令牌、线程/栈/局部变量、三种单步、继续/暂停、断点增删和无求值渲染 |
 | 发布包和兼容范围 | `buildPlugin verifyPluginStructure`，按需要补充兼容验证 |

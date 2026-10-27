@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>dev.ideamcp.symbols</id>
     <name>Java Symbol MCP</name>
-    <version>0.6.8</version>
+    <version>0.6.10</version>
     <vendor>IDEA MCP</vendor>
     <description><![CDATA[Read Java symbols, definitions, references, call sites, IDEA diagnostics and captured runtime logs, and restart existing local service configurations in Run or Debug mode through a local MCP endpoint.]]></description>
     <idea-version since-build="262.10968.63" until-build="262.*"/>
@@ -13,6 +13,7 @@
         <extensionPoint name="platformTools" interface="dev.ideamcp.PlatformToolProvider" dynamic="true"/>
     </extensionPoints>
     <extensions defaultExtensionNs="com.intellij">
+        <fileDocumentSynchronizationVetoer implementation="dev.ideamcp.EditorSaveVetoer"/>
         <postStartupActivity implementation="dev.ideamcp.IdeaMcpStartup"/>
     </extensions>
     <actions>

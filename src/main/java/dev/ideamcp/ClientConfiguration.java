@@ -6,6 +6,7 @@ import com.google.gson.stream.JsonToken;
 import dev.ideamcp.protocol.Json;
 import org.tomlj.Toml;
 import org.tomlj.TomlParseResult;
+import org.tomlj.TomlPosition;
 import org.tomlj.TomlTable;
 
 import java.io.*;
@@ -315,20 +316,42 @@ public final class ClientConfiguration {
         TomlTable existing = entry(parseToml(input));
         if (existing != null && (existing.contains("command") || existing.contains("bearer_token_env_var") || existing.contains("env_http_headers") || existing.contains("http_headers_helper")))
             throw new IOException("CONFIG_CONFLICT: incompatible authentication or transport in idea-java");
-        List<Section> sections = tomlSections(input);
+        // Edit only parsed managed values. Rewriting the file or serializing the header
+        // table would discard comments, quoting, unknown fields and literal dotted keys.
+        List<TomlEdit> edits = new ArrayList<>();
+        boolean urlPresent = existing != null && existing.contains("url");
+        if (urlPresent) editString(input, existing, "url", c.url(), edits);
+        TomlTable table = null;
+        if (existing != null && existing.contains("http_headers")) {
+            Object value = existing.get("http_headers");
+            if (!(value instanceof TomlTable)) throw new IOException("CONFIG_INVALID: http_headers must be a table");
+            table = (TomlTable) value;
+        }
+        boolean authorizationPresent = table != null && table.contains(List.of("Authorization"));
+        boolean inline = false;
+        if (table != null) {
+            TomlAssignment assignment = locateAssignment(input, existing.inputPositionOf("http_headers"));
+            inline = assignment != null && input.charAt(assignment.value()) == '{'
+                    && sectionName(input.substring(assignment.key(), assignment.equalsOffset()).strip()).equals("http_headers");
+            if (authorizationPresent) editString(input, table, "Authorization", "Bearer " + c.token(), edits);
+            else if (inline) edits.add(new TomlEdit(assignment.value() + 1, assignment.value() + 1,
+                    " Authorization = " + quote("Bearer " + c.token()) + (table.isEmpty() ? "" : ",")));
+        }
+        StringBuilder patched = new StringBuilder(input);
+        edits.sort(Comparator.comparingInt(TomlEdit::start).reversed());
+        for (TomlEdit edit : edits) patched.replace(edit.start(), edit.end(), edit.text());
+        List<Section> sections = tomlSections(patched.toString());
         StringBuilder output = new StringBuilder();
-        boolean main = false, headers = false;
+        boolean main = false, headers = inline || authorizationPresent;
         for (Section s : sections) {
             String text = s.text;
             if (s.name.equals("mcp_servers.idea-java")) {
                 main = true;
-                text = assignment(text, "url", quote(c.url()));
-                if (Pattern.compile("(?m)^\\s*http_headers\\s*=").matcher(text).find())
-                    throw new IOException("CONFIG_FORMAT: expand inline http_headers before automatic configuration");
+                if (!urlPresent) text = assignment(text, "url", quote(c.url()));
             }
             if (s.name.equals("mcp_servers.idea-java.http_headers")) {
                 headers = true;
-                text = assignment(text, "Authorization", quote("Bearer " + c.token()));
+                if (!authorizationPresent) text = assignment(text, "Authorization", quote("Bearer " + c.token()));
             }
             output.append(text);
         }
@@ -340,6 +363,62 @@ public final class ClientConfiguration {
         String result = output.toString();
         parseToml(result);
         return result;
+    }
+
+    private record TomlEdit(int start, int end, String text) {}
+    private record TomlAssignment(int key, int equalsOffset, int value) {}
+
+    private static void editString(String input, TomlTable table, String key, String value, List<TomlEdit> edits) throws IOException {
+        Object previous = table.get(List.of(key));
+        if (!(previous instanceof String)) throw new IOException("CONFIG_INVALID: managed value must be a string");
+        if (previous.equals(value)) return;
+        TomlAssignment assignment = locateAssignment(input, table.inputPositionOf(List.of(key)));
+        if (assignment == null) throw new IOException("CONFIG_FORMAT: cannot locate managed value");
+        int start = assignment.value();
+        char delimiter = input.charAt(start);
+        if (delimiter != '\"' && delimiter != '\'') throw new IOException("CONFIG_FORMAT: expected a TOML string");
+        String triple = String.valueOf(delimiter).repeat(3);
+        boolean multiline = input.startsWith(triple, start);
+        for (int i = start + (multiline ? 3 : 1); i < input.length(); i++) {
+            if (delimiter == '\"' && input.charAt(i) == '\\') { i++; continue; }
+            if (input.charAt(i) != delimiter) continue;
+            int end = i + 1;
+            if (multiline) {
+                while (end < input.length() && input.charAt(end) == delimiter) end++;
+                if (end - i < 3) { i = end - 1; continue; }
+            }
+            edits.add(new TomlEdit(start, end, quote(value)));
+            return;
+        }
+        throw new IOException("CONFIG_FORMAT: cannot locate string end");
+    }
+
+    /** Tomlj/ANTLR columns count Unicode code points, not Java UTF-16 code units. */
+    private static TomlAssignment locateAssignment(String input, TomlPosition position) throws IOException {
+        if (position == null) return null;
+        int lineStart = 0;
+        for (int line = 1; line < position.line(); line++) {
+            int newline = input.indexOf('\n', lineStart);
+            if (newline < 0) throw new IOException("CONFIG_FORMAT: invalid source position");
+            lineStart = newline + 1;
+        }
+        int start = input.offsetByCodePoints(lineStart, position.column() - 1);
+        char quoted = 0;
+        for (int i = start; i < input.length() && input.charAt(i) != '\n'; i++) {
+            char ch = input.charAt(i);
+            if (quoted != 0) {
+                if (quoted == '\"' && ch == '\\') i++;
+                else if (ch == quoted) quoted = 0;
+            } else if (ch == '\"' || ch == '\'') quoted = ch;
+            else if (ch == '#' || ch == '[') return null;
+            else if (ch == '=') {
+                int value = i + 1;
+                while (value < input.length() && Character.isWhitespace(input.charAt(value))) value++;
+                if (value >= input.length()) throw new IOException("CONFIG_FORMAT: missing managed value");
+                return new TomlAssignment(start, i, value);
+            }
+        }
+        return null;
     }
 
     private static String assignment(String section, String key, String value) throws IOException {

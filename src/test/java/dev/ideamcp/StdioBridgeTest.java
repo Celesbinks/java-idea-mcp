@@ -59,7 +59,8 @@ public class StdioBridgeTest {
             StdioBridge.relay(URI.create(server.url()), token, new ByteArrayInputStream(requests.getBytes(StandardCharsets.UTF_8)), output);
             String[] responses = output.toString(StandardCharsets.UTF_8).strip().split("\n");
             assertEquals(2, responses.length);
-            assertTrue(responses[0].contains("0.6.8"));
+            assertEquals("0.6.10", com.google.gson.JsonParser.parseString(responses[0]).getAsJsonObject()
+                    .getAsJsonObject("result").getAsJsonObject("serverInfo").get("version").getAsString());
             assertTrue(responses[1].contains("read_symbols"));
             assertFalse(output.toString(StandardCharsets.UTF_8).contains(token));
         }

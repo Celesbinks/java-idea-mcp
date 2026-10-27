@@ -10,7 +10,7 @@ Query Java code, call sites and diagnostics, read runtime logs, and start or res
 
 ### 概览
 
-当前版本 **0.6.8**，目标为 **IntelliJ IDEA 2026.2.3（262.10968.63）**，兼容范围为 `262.10968.63`～`262.*`。使用 JDK 25 编译和测试，保留 Java 21 语言级别及字节码。保留原有 19 个工具，新增两个异步管理工具；再复用当前 IDE 中可用的官方工具提供方，完整基线为 **56 + 21 = 77 个工具**。实际目录受插件、许可、禁用及路由设置影响。
+当前版本 **0.6.10**，目标为 **IntelliJ IDEA 2026.2.3（262.10968.63）**，兼容范围为 `262.10968.63`～`262.*`。使用 JDK 25 编译和测试，保留 Java 21 语言级别及字节码。保留原有 19 个工具，新增两个异步管理工具；再复用当前 IDE 中可用的官方工具提供方，完整基线为 **56 + 21 = 77 个工具**。实际目录受插件、许可、禁用及路由设置影响。
 
 | 工具 | 用途 | 必要参数 |
 | --- | --- | --- |
@@ -38,6 +38,20 @@ Query Java code, call sites and diagnostics, read runtime logs, and start or res
 
 原有项目工具使用 `project`，新增官方工具使用 `projectPath`；两个异步管理工具只需 `operationId`。多个项目打开时使用 `list_projects` 返回的完整项目路径。
 
+### 源码编辑、保存与落盘（0.6.10）
+
+`create_new_file`、`apply_patch`、`reformat_file`、`rename_refactoring` 现在都先返回 `operationId`，用 `get_tool_operation` 查询同一个操作。先检查 `inProgress=false`、`phase`、`error` 和 `result.isError`；涉及文件编辑时，还必须确认 `editorWrite.status="persisted"`，再交给编译器、本地补丁或其他直接读写磁盘的工具。该对象也保留在最终 MCP 结果的 `_meta["dev.ideamcp/editorWrite"]` 中。
+
+操作的 `stage` 依次反映 `provider`、`saving`、`flushing`、`verifying`；正常完成后为 `finished`。插件只记录本次调用上下文中的文档/VFS 修改，必要时仅保存仍属于本次操作的文档，在后台显式等待这些文件落盘，再核对文档版本、VFS 和物理文件内容；编码、BOM 和换行继续由 IDEA 处理。不会调用全局保存来清理无关的未保存文档。直接工具的明确目标如果已有未保存内容或磁盘冲突，会提前拒绝；同一项目的潜在编辑操作（包括通用路由）并发时返回 `EDITOR_WRITE_BUSY`。
+
+编辑操作不再被 20 秒查询超时取消；原生只读查询仍保持该上限。10 分钟是编辑操作的提示期限，`deadlineExceeded=true` 时仍须继续查询原操作，不能重新提交。排队中的编辑可以取消；已开始的编辑进入 `cancel_requested` 后会完成当前提供方及保存核验，再返回最终状态。最终 `cancelled` 可能包含已经落盘的修改，取消不代表撤销。保存被阻止、文档被并发修改、磁盘不一致或核验失败时，操作返回失败/`incomplete`，保留编辑内容并要求先解决冲突。
+
+`execute_tool` 中的 IDE 编辑使用同一保存边界；`not_observed` 只表示没有观察到本次 IDE 文件事件，不能证明终端、外部进程或任意第三方工具没有写盘。跟踪条目最多 10000 个，超限不能确认完成。该保护不能拦截 Codex 本地文件工具或其他进程的并发写入，也不自动选择“保留内存”或“加载磁盘”。0.6.9 的内联 `http_headers`、所有权与配置保留修复继续保留。
+
+提供方内部触发“保存全部”时，本次调用的保存范围仍受限制，无关的未保存文档保持原样；用户显式保存不受影响。升级或卸载插件前，请等待进行中的编辑操作完成。安装后重载客户端，使四个编辑工具的异步说明生效。
+
+2026-10-27 的 0.6.10 验证：编辑保存、异步操作、官方适配和配置保留相关 **47 项测试全部通过**；完整回归 **135/137**，两项失败仍为既有目录树 200 ms 优化预算断言。`buildPlugin` 和 `verifyPluginStructure` 通过。测试在独立 IDEA 沙盒及临时 JVM 中进行，覆盖延迟落盘、超过旧 20 秒限制、取消、保存范围、并发冲突与编码/BOM。安装后实测已发现 87 个工具，临时文件的创建、补丁和实际格式化均完成保存与磁盘核验，并已清理；排除目录中的重构样本未验证引用传播，超时与取消故障注入仅在独立测试 JVM 中验证。
+
 ### 官方工具覆盖与自动配置
 
 0.6.3 按[只读工具性能设计](docs/design/readonly-tool-performance.md)减少调用中的全目录 schema 转换，并在请求内复用已选提供方；执行时仍重新检查当前可用性和 schema，不缓存结果或授权。官方诊断、符号搜索、Git 等算法继续复用。十三项生产基线、同层复测、完整项目概览任务及边界见[验证报告](docs/verification/0.6.3-readonly-performance.md)；单项的小幅改善与组合任务收益分别报告，不承诺所有工具都显著提速。
@@ -53,6 +67,10 @@ Query Java code, call sites and diagnostics, read runtime logs, and start or res
 新增入口覆盖官方文件/补丁、搜索/调用关系、诊断/构建、重构/格式化、Run、终端、13 个调试器、检查脚本/PSI、VCS 和 14 个数据库工具。全部名称与依赖见 [设计清单](docs/design/jetbrains-parity-and-auto-connect.md)，此前目录及路由修复见 [0.6.1 验证记录](docs/verification/0.6.1.md)。官方入口通过 IDE 进程内实现复用；已有原生工具继续保持独立实现。新的原生替代须通过等价结果及速度门槛，不以缩小结果冒充性能提升。
 
 安装后运行 **Tools → Java MCP: Auto-Configure Clients**，选择一个客户端，即可创建或接管匹配的 `idea-java` 条目。支持 Codex、Claude Code、Cursor、Windsurf、项目级 VS Code / Copilot；Claude Desktop 使用随插件提供的独立 Java stdio 桥接。只维护明确选中的客户端；IDE 重启、端口回退、固定令牌更新后自动同步。首次配置或工具升级后重载客户端。固定令牌仍由 PasswordSafe 保存；内存凭据模式不建立自动维护。JSON / JSONC 保留未知字段并重新排版，注释会移除；损坏或冲突条目拒绝覆盖。
+
+0.6.9 修复 Codex TOML 自动配置器：同时接受 `http_headers = { Authorization = "Bearer <TOKEN>", Extra = "keep" }` 内联表和独立的 `[mcp_servers.idea-java.http_headers]` 表。已有配置仅替换需要更新的 URL / Authorization 字符串，保留其他请求头、配置、注释、引号及换行；重复配置不重复写入。空内联表可在合并时补入认证头，但首次接管现有条目仍要求 URL 和认证匹配，手工修改后的所有权冲突继续拒绝覆盖。测试仅使用临时配置，安装后需另行确认实际客户端连接。
+
+本机 0.6.9 验证：配置相关 13 项测试全部通过，新增 7 项回归用例；打包和插件结构校验通过。完整回归为 117/119，剩余两项仍是 0.6.8 已复现的目录树 200 ms 优化预算断言，本次未修改该算法或预算。
 
 原生工具不依赖官方 MCP 插件。新增官方工具需要启用内置 MCP Server，以及对应的 Terminal / Shell、Debugger MCP、Database Tools and SQL、VCS、Qodana / Ultimate 等提供方；保持 IDE 的禁用、路由及确认规则，不自动启用 brave mode。`get_run_configurations` 及路由返回的结构化启动参数、环境字段会脱敏。官方调试求值/对象展开不具备原生 `read_debug_variables` 的无求值保证。
 
@@ -84,7 +102,7 @@ Query Java code, call sites and diagnostics, read runtime logs, and start or res
 
 0.6.4 按[调用树与 Git 性能设计](docs/design/call-tree-and-git-performance.md)对 2～4 个项目内独立 Git 仓库做有界并行调度，状态命令、解析、过滤、计数、排序和截断仍复用当前官方提供方；取消共享 20 秒查询预算。单仓库、显式选根、嵌套/外部根等保留官方路径。二进制进程读取未达收益门槛，调用树的候选搜索不能安全省略，均不替换。完整结果差分、尾延迟数据与安装边界见[0.6.4 验证记录](docs/verification/0.6.4-query-performance.md)。安装后的[生产复验](docs/verification/0.6.4-installed.md)确认 0.6.4 自动连接和 77 项工具正常；完整 14 节点调用树与单仓库 49 项 Git 状态均与官方一致。分任务复测中位数分别为 561/581 ms、62/64 ms（idea-java/官方）；混合轮测 Git P95 曾为 103/69 ms，完整保留两组数据。多仓库沙盒收益不适用于当前单仓库项目。
 
-1. 构建插件，或使用已生成的 [0.6.8 安装包](build/distributions/idea-symbol-mcp-0.6.8.zip)。构建产物不随源码保存。
+1. 构建插件，或使用已生成的 [0.6.10 安装包](build/distributions/idea-symbol-mcp-0.6.10.zip)。构建产物不随源码保存。
 2. IDEA → **Settings → Plugins → 齿轮 → Install Plugin from Disk**，选择 ZIP，按提示安装或重启。
 3. 打开 Java 项目，在 IDEA 主窗口执行 **Tools → Java MCP: Copy Connection Configuration**；也可以连按两次 Shift 搜索此操作。
 4. 将复制的配置加入支持 Streamable HTTP 的 MCP 客户端。索引查询应等待 IDEA 完成索引。
@@ -351,7 +369,7 @@ $env:IDEA_MCP_TOKEN = '<YOUR_TOKEN_WITHOUT_BEARER_PREFIX>'
 
 仅监听回环地址，验证 Host / Origin 并要求 Bearer 认证。协议为 `2025-03-26`、`2025-06-18`、`2025-11-25` 的无会话 Streamable HTTP 子集，提供 `initialize`、初始化通知、`ping`、`tools/list`、`tools/call`。响应使用 JSON；GET / DELETE 返回 405；没有 SSE 推送、资源或 MCP 协议级任务接口；stdio 客户端通过独立桥接进程连接 HTTP。重启操作 ID 是工具的应用级约定。
 
-POST 要求 `Content-Type: application/json` 和 `Accept: application/json, text/event-stream`，请求体上限 1 MiB。0.6.8 针对本地 IDEA 2026.2.3，其他版本、Remote Development 和分离前后端尚未验证；IDEA 2025.2 请使用旧版 0.4.0。
+POST 要求 `Content-Type: application/json` 和 `Accept: application/json, text/event-stream`，请求体上限 1 MiB。0.6.10 针对本地 IDEA 2026.2.3，其他版本、Remote Development 和分离前后端尚未验证；IDEA 2025.2 请使用旧版 0.4.0。
 
 | 问题 | 处理 |
 | --- | --- |
@@ -371,7 +389,7 @@ POST 要求 `Content-Type: application/json` 和 `Accept: application/json, text
 
 ### Overview
 
-Version **0.6.8** targets **IntelliJ IDEA 2026.2.3 (262.10968.63)**, with a compatibility range of `262.10968.63`–`262.*`. It builds and tests with JDK 25 while retaining Java 21 language and bytecode compatibility. The original nineteen tools plus two operation-management tools are retained alongside available official providers: **56 + 21 = 77 tools** in the complete baseline environment. Availability depends on plugins, licensing, disabled tools and router settings.
+Version **0.6.10** targets **IntelliJ IDEA 2026.2.3 (262.10968.63)**, with a compatibility range of `262.10968.63`–`262.*`. It builds and tests with JDK 25 while retaining Java 21 language and bytecode compatibility. The original nineteen tools plus two operation-management tools are retained alongside available official providers: **56 + 21 = 77 tools** in the complete baseline environment. Availability depends on plugins, licensing, disabled tools and router settings.
 
 | Tool | Purpose | Required arguments |
 | --- | --- | --- |
@@ -399,6 +417,20 @@ Version **0.6.8** targets **IntelliJ IDEA 2026.2.3 (262.10968.63)**, with a comp
 
 Original project tools use `project`; added official tools use `projectPath`. The two new operation tools only require `operationId`. With multiple projects open, use the exact project path returned by `list_projects`.
 
+### Source editing, saving and disk persistence (0.6.10)
+
+`create_new_file`, `apply_patch`, `reformat_file` and `rename_refactoring` now return an `operationId`; poll that same ID with `get_tool_operation`. Check `inProgress=false`, `phase`, `error` and `result.isError`. For file edits, also require `editorWrite.status="persisted"` before handing files to compilers, local patches or other direct disk readers/writers. The state is retained in the final MCP result at `_meta["dev.ideamcp/editorWrite"]` too.
+
+`stage` reports `provider`, `saving`, `flushing`, `verifying`, then `finished`. The plugin tracks document/VFS changes from this call's context, saves only still-owned changed documents when necessary, explicitly waits for their disk writes in the background, and verifies document versions, VFS and physical content. IDEA retains responsibility for encoding, BOM and line endings. Unrelated unsaved documents are not globally saved. Explicit direct-tool targets with existing unsaved changes or disk conflicts are rejected before editing. Concurrent potential editor operations in one project, including the universal router, return `EDITOR_WRITE_BUSY`.
+
+Editor operations are no longer cancelled by the 20-second query timeout; native read-only queries retain that limit. The editor deadline is advisory at ten minutes: keep polling the original operation when `deadlineExceeded=true`, rather than resubmitting. Queued edits can be cancelled. Once started, `cancel_requested` waits through the active provider and persistence checks before a final state. Final `cancelled` may include persisted changes; cancellation is not undo. Vetoed saves, concurrent document changes, disk mismatches or verification failures produce a failed/incomplete result and retain editor contents for reconciliation.
+
+IDE edits through `execute_tool` use the same boundary. `not_observed` only means no IDE file events were tracked; it does not prove terminal commands, external processes or arbitrary third-party tools made no disk writes. Tracking is capped at 10000 entries; exceeding it prevents confirmation. This cannot intercept concurrent writes by Codex local file tools or other processes, and never automatically chooses memory or disk as the conflict winner. The 0.6.9 inline `http_headers`, ownership and configuration-preservation fixes are retained.
+
+Provider-internal save-all calls remain limited to this operation's save scope, leaving unrelated unsaved documents intact; explicit user saves are unaffected. Wait for active editor operations before upgrading or unloading the plugin. Reload the client after installation to discover the four editor tools' asynchronous contract.
+
+Validation on 2026-10-27 passed all **47 related tests** for editor persistence, asynchronous operations, official adaptation and configuration preservation. The full suite passed **135/137**; the two failures remain the existing directory-tree 200 ms optimization-budget assertions. `buildPlugin` and `verifyPluginStructure` passed. Tests use isolated IDEA sandboxes and disposable JVMs, covering delayed disk writes, operations beyond the old 20-second limit, cancellation, save scope, concurrent changes and encoding/BOM. Installed-instance checks discovered 87 tools and verified saving and physical disk contents after creating, patching and actually formatting temporary files, which were then removed. The rename sample in an excluded directory did not verify reference propagation; timeout and cancellation fault injection were verified only in isolated test JVMs.
+
 ### Official coverage and automatic configuration
 
 Version 0.6.3 follows the [read-only performance design](docs/design/readonly-tool-performance.md): resolve only the requested schema and reuse its provider within that request, while checking current availability and schema again at execution. No results or authorizations are cached; official diagnostic, symbol-search and Git algorithms are retained. The [verification report](docs/verification/0.6.3-readonly-performance.md) separates thirteen production baselines, controlled measurements, the complete project-overview task and remaining limits. Small per-call savings are distinguished from combined-task improvements.
@@ -414,6 +446,10 @@ After installing/reloading 0.6.2, [production verification](docs/verification/0.
 Added tools cover official file/patch operations, search/call analysis, diagnostics/builds, refactoring/formatting, Run, terminal, thirteen debugger tools, inspection scripts/PSI, VCS and fourteen database tools. See the [complete design inventory](docs/design/jetbrains-parity-and-auto-connect.md) and the earlier [0.6.1 discovery/router validation](docs/verification/0.6.1.md). Added capabilities reuse IDE implementations in-process, while existing native APIs remain independent. A new native replacement requires equivalent results and a measured speed improvement.
 
 After installation, run **Tools → Java MCP: Auto-Configure Clients** and select one client to create or adopt its matching `idea-java` entry. Supported clients are Codex, Claude Code, Cursor, Windsurf and project-level VS Code / Copilot; Claude Desktop uses the bundled Java stdio bridge. Only selected clients are maintained across IDE restarts, port fallback and token changes. Reload the client after initial setup or tool upgrades. PasswordSafe remains the token source; memory-only credentials cannot establish automatic maintenance. JSON / JSONC merges preserve unknown fields but reformat the file and remove comments; malformed files or ownership conflicts are refused.
+
+Version 0.6.9 fixes Codex TOML auto-configuration for both inline `http_headers = { Authorization = "Bearer <TOKEN>", Extra = "keep" }` and separate `[mcp_servers.idea-java.http_headers]` tables. Existing configurations replace only URL / Authorization strings that need updating, preserving other headers, settings, comments, quoting and line endings. Repeated configuration does not rewrite unchanged files. The merge can insert authentication into an empty inline table; first adoption of an existing entry still requires matching URL/authentication, and ownership conflicts after manual edits remain protected. Tests use temporary configurations; the installed client connection needs separate confirmation.
+
+Local 0.6.9 validation passed all thirteen configuration tests, including seven new regression cases, plus packaging and plugin structure verification. The full suite passed 117/119; the two remaining failures are the directory-tree 200 ms optimization-budget assertions already reproduced in 0.6.8. This patch does not change that algorithm or budget.
 
 Native tools work without the official MCP plugin. Added tools need the bundled MCP Server and their Terminal / Shell, Debugger MCP, Database Tools and SQL, VCS, Qodana / Ultimate providers. IDE disabled-tool, router and confirmation settings are respected; brave mode is never enabled automatically. Structured launch argument/environment fields are sanitized in `get_run_configurations` and router results. Official debugger evaluation and object expansion do not inherit native `read_debug_variables`'s no-evaluation guarantee.
 
@@ -445,7 +481,7 @@ Earlier [0.6.5 installed verification](docs/verification/0.6.5-installed.md) con
 
 Version 0.6.4 follows the [call-tree and Git performance design](docs/design/call-tree-and-git-performance.md): bounded parallel scheduling for 2–4 independent Git roots inside the project, while retaining the current official provider's status commands, parsing, filters, counters, ordering and limits. Cancellation shares the outer 20-second query budget. Single roots, explicit selections, nested/external roots and unsupported cases retain the official path. Binary process reading failed the benefit threshold, and call-tree candidate searches cannot safely be omitted; both remain unchanged. See the [0.6.4 verification](docs/verification/0.6.4-query-performance.md) for full-result comparisons, tail latency and installation limits. The installed [production verification](docs/verification/0.6.4-installed.md) confirms 0.6.4 automatic connection and 77 tools. The complete 14-node tree and 49-entry single-root status match official MCP. Separate-task medians were 561/581 ms and 62/64 ms (idea-java/official); mixed-task Git P95 was 103/69 ms. Both runs are retained. Multi-root sandbox gains do not apply to this single-root project.
 
-1. Build the plugin or use the generated [0.6.8 distribution](build/distributions/idea-symbol-mcp-0.6.8.zip). Build artifacts are not included with the source.
+1. Build the plugin or use the generated [0.6.10 distribution](build/distributions/idea-symbol-mcp-0.6.10.zip). Build artifacts are not included with the source.
 2. Select **Settings → Plugins → gear → Install Plugin from Disk** in IDEA, choose the ZIP and follow any restart prompt.
 3. Open a Java project and run **Tools → Java MCP: Copy Connection Configuration** in the main window. Alternatively, press Shift twice and search for the action.
 4. Add the copied configuration to a Streamable HTTP MCP client. Wait for indexing before index-dependent queries.
@@ -712,7 +748,7 @@ $env:IDEA_MCP_TOKEN = '<YOUR_TOKEN_WITHOUT_BEARER_PREFIX>'
 
 The listener is loopback-only, validates Host / Origin and requires Bearer authentication. It implements a stateless Streamable HTTP subset for `2025-03-26`, `2025-06-18` and `2025-11-25`: `initialize`, initialization notifications, `ping`, `tools/list` and `tools/call`. Responses use JSON; GET / DELETE return 405. There is no SSE push, resource API or protocol-level MCP task API; stdio clients use the separate bridge process. Restart IDs are an application-level tool convention.
 
-POST requires `Content-Type: application/json` and `Accept: application/json, text/event-stream`, with a 1 MiB body limit. Version 0.6.8 targets local IDEA 2026.2.3; other releases, Remote Development and split frontend / backend setups remain unverified. Use the older 0.4.0 release for IDEA 2025.2.
+POST requires `Content-Type: application/json` and `Accept: application/json, text/event-stream`, with a 1 MiB body limit. Version 0.6.10 targets local IDEA 2026.2.3; other releases, Remote Development and split frontend / backend setups remain unverified. Use the older 0.4.0 release for IDEA 2025.2.
 
 | Symptom | Action |
 | --- | --- |
