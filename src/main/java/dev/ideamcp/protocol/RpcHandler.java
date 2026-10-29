@@ -65,7 +65,7 @@ public final class RpcHandler {
         String requested = Arguments.required(params, "protocolVersion");
         String version = VERSIONS.contains(requested) ? requested : "2025-11-25";
         return object("protocolVersion", version, "capabilities", object("tools", object("listChanged", false)),
-                "serverInfo", object("name", "idea-symbol-mcp", "version", "0.6.10"),
+                "serverInfo", object("name", "idea-symbol-mcp", "version", "0.6.11"),
                 "instructions", "Use list_projects first. Positions are 1-based UTF-16. Queries use current committed editor contents. Retry INDEXING or DOCUMENTS_UNCOMMITTED errors after IDEA settles. For IDE project source edits prefer apply_patch/create_new_file/reformat_file/rename_refactoring over external disk writes. These editors return operationId: poll the same get_tool_operation until inProgress=false, then inspect phase/error/result.isError and editorWrite.status=persisted before handing files to disk tools. saving/flushing/verifying, cancel_requested and deadlineExceeded never mean editing stopped. On incomplete/conflict stop and reconcile; do not retry, reload or overwrite blindly. For service startup/restart, list_run_configurations first, restart only the user-requested exact configuration ID, and poll get_run_operation until completion. A started process is not a health check. For debugger inspection, list_debug_sessions first and use its exact sessionId and current pauseId. Debug controls and breakpoint changes require the user's explicit request; poll sessions after control acceptance and never reuse an old pauseId.");
     }
 

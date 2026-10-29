@@ -51,7 +51,7 @@ public final class OfficialMcpAdapter implements PlatformToolProvider {
         this.treeQuery = Objects.requireNonNull(treeQuery);
     }
     private static final AtomicInteger CALL_IDS = new AtomicInteger();
-    private static final Implementation CLIENT = new Implementation("java-symbol-mcp", "0.6.10", null, null, null);
+    private static final Implementation CLIENT = new Implementation("java-symbol-mcp", "0.6.11", null, null, null);
     private static final McpServerService.McpSessionOptions SESSION = new McpServerService.McpSessionOptions(
             McpServerService.AskCommandExecutionMode.RESPECT_GLOBAL_SETTINGS, null, null, null, McpElicitationKind.IDE);
     private static final Set<String> EXPLICIT_EFFECTS = Set.of("create_new_file", "apply_patch", "reformat_file", "rename_refactoring", "execute_tool", "xdebug_evaluate_expression", "xdebug_set_variable", "xdebug_get_frame_values", "xdebug_get_value_by_path", "run_inspection_kts", "execute_sql_query");
@@ -177,7 +177,7 @@ public final class OfficialMcpAdapter implements PlatformToolProvider {
         try (var phase = QueryTiming.phase("adapter_context")) {
         json = (kotlinx.serialization.json.JsonObject) kotlinx.serialization.json.Json.Default.parseToJsonElement(arguments.toString());
         var empty = (kotlinx.serialization.json.JsonObject) kotlinx.serialization.json.Json.Default.parseToJsonElement("{}");
-        info = new McpCallInfo(CALL_IDS.incrementAndGet(), new ClientInfo("java-symbol-mcp", "0.6.10"), project, tool.getDescriptor(), json, empty, SESSION, Map.of(), null);
+        info = new McpCallInfo(CALL_IDS.incrementAndGet(), new ClientInfo("java-symbol-mcp", "0.6.11"), project, tool.getDescriptor(), json, empty, SESSION, Map.of(), null);
         context = (officialGit ? gitDispatcher : Dispatchers.getDefault()).plus(new McpCallAdditionalDataElement(info));
         if (timing != null) context = context.plus(new TimingElement(timing));
         if (boundary != null) context = context.plus(boundary.context());

@@ -10,7 +10,7 @@ Query Java code, call sites and diagnostics, read runtime logs, and start or res
 
 ### 概览
 
-当前版本 **0.6.10**，目标为 **IntelliJ IDEA 2026.2.3（262.10968.63）**，兼容范围为 `262.10968.63`～`262.*`。使用 JDK 25 编译和测试，保留 Java 21 语言级别及字节码。保留原有 19 个工具，新增两个异步管理工具；再复用当前 IDE 中可用的官方工具提供方，完整基线为 **56 + 21 = 77 个工具**。实际目录受插件、许可、禁用及路由设置影响。
+当前版本 **0.6.11**，目标为 **IntelliJ IDEA 2026.2.3（262.10968.63）**，兼容范围为 `262.10968.63`～`262.*`。使用 JDK 25 编译和测试，保留 Java 21 语言级别及字节码。保留原有 19 个工具，新增两个异步管理工具；再复用当前 IDE 中可用的官方工具提供方，完整基线为 **56 + 21 = 77 个工具**。实际目录受插件、许可、禁用及路由设置影响。
 
 | 工具 | 用途 | 必要参数 |
 | --- | --- | --- |
@@ -72,6 +72,12 @@ Query Java code, call sites and diagnostics, read runtime logs, and start or res
 
 本机 0.6.9 验证：配置相关 13 项测试全部通过，新增 7 项回归用例；打包和插件结构校验通过。完整回归为 117/119，剩余两项仍是 0.6.8 已复现的目录树 200 ms 优化预算断言，本次未修改该算法或预算。
 
+0.6.11 修复托管配置的误冲突：Codex 改用带版本的连接语义摘要，修改 `startup_timeout_sec`、`tool_timeout_sec`、`enabled`、工具策略、注释、换行、引号或内联/独立表布局，不再使新的托管记录失效。URL、全部请求头及认证/传输字段仍受保护；后台刷新不会擅自覆盖这些字段的手工变更，也不会重新启用已禁用的连接。
+
+旧版记录按原始文本摘要校验；校验通过时自动迁移且不为迁移单独改写客户端文件。若旧摘要已经冲突，安装 0.6.11 后运行 **Tools → Java MCP: Auto-Configure Clients**，选择原客户端：仅当现有 URL 和认证与当前 IDEA 匹配时，才重新接管并保留其配置。连接不匹配、被删除、格式损坏或使用其他认证方式时继续拒绝覆盖；先核对当前 IDEA 的连接配置。更新后重载客户端。新版记录无法由旧版插件识别，降级时需在连接匹配后重新配置。
+
+2026-10-29 验证：配置相关 **23 项测试全部通过**，新增 10 项；完整回归 **145/147**，两项失败仍为既有目录树 200 ms 优化预算断言。打包及插件结构校验通过，0.6.10 编辑保存相关类与原发布包逐字节一致。安装后的 0.6.11 已通过认证并发现 87 个工具，Codex 可直接列出项目；全局和项目级托管记录均已迁移至新版摘要且无错误。实测中全局条目曾指向旧端口，需先对齐 URL 再重新接管；连接字段不匹配仍会被正确拒绝覆盖。
+
 原生工具不依赖官方 MCP 插件。新增官方工具需要启用内置 MCP Server，以及对应的 Terminal / Shell、Debugger MCP、Database Tools and SQL、VCS、Qodana / Ultimate 等提供方；保持 IDE 的禁用、路由及确认规则，不自动启用 brave mode。`get_run_configurations` 及路由返回的结构化启动参数、环境字段会脱敏。官方调试求值/对象展开不具备原生 `read_debug_variables` 的无求值保证。
 
 `execute_tool`、构建、运行配置、终端、检查脚本、SQL 执行/预览/连接测试等长操作立即返回 `operationId`，轮询 `get_tool_operation`，检查 `phase`、`error` 和 `result.isError`；最终 `result` 保留完整 MCP 内容。取消仅表示请求已提交。完整异步清单以工具描述为准；其余官方调用等待上限 20 秒。
@@ -102,7 +108,7 @@ Query Java code, call sites and diagnostics, read runtime logs, and start or res
 
 0.6.4 按[调用树与 Git 性能设计](docs/design/call-tree-and-git-performance.md)对 2～4 个项目内独立 Git 仓库做有界并行调度，状态命令、解析、过滤、计数、排序和截断仍复用当前官方提供方；取消共享 20 秒查询预算。单仓库、显式选根、嵌套/外部根等保留官方路径。二进制进程读取未达收益门槛，调用树的候选搜索不能安全省略，均不替换。完整结果差分、尾延迟数据与安装边界见[0.6.4 验证记录](docs/verification/0.6.4-query-performance.md)。安装后的[生产复验](docs/verification/0.6.4-installed.md)确认 0.6.4 自动连接和 77 项工具正常；完整 14 节点调用树与单仓库 49 项 Git 状态均与官方一致。分任务复测中位数分别为 561/581 ms、62/64 ms（idea-java/官方）；混合轮测 Git P95 曾为 103/69 ms，完整保留两组数据。多仓库沙盒收益不适用于当前单仓库项目。
 
-1. 构建插件，或使用已生成的 [0.6.10 安装包](build/distributions/idea-symbol-mcp-0.6.10.zip)。构建产物不随源码保存。
+1. 构建插件，或使用已生成的 [0.6.11 安装包](build/distributions/idea-symbol-mcp-0.6.11.zip)。构建产物不随源码保存。
 2. IDEA → **Settings → Plugins → 齿轮 → Install Plugin from Disk**，选择 ZIP，按提示安装或重启。
 3. 打开 Java 项目，在 IDEA 主窗口执行 **Tools → Java MCP: Copy Connection Configuration**；也可以连按两次 Shift 搜索此操作。
 4. 将复制的配置加入支持 Streamable HTTP 的 MCP 客户端。索引查询应等待 IDEA 完成索引。
@@ -369,7 +375,7 @@ $env:IDEA_MCP_TOKEN = '<YOUR_TOKEN_WITHOUT_BEARER_PREFIX>'
 
 仅监听回环地址，验证 Host / Origin 并要求 Bearer 认证。协议为 `2025-03-26`、`2025-06-18`、`2025-11-25` 的无会话 Streamable HTTP 子集，提供 `initialize`、初始化通知、`ping`、`tools/list`、`tools/call`。响应使用 JSON；GET / DELETE 返回 405；没有 SSE 推送、资源或 MCP 协议级任务接口；stdio 客户端通过独立桥接进程连接 HTTP。重启操作 ID 是工具的应用级约定。
 
-POST 要求 `Content-Type: application/json` 和 `Accept: application/json, text/event-stream`，请求体上限 1 MiB。0.6.10 针对本地 IDEA 2026.2.3，其他版本、Remote Development 和分离前后端尚未验证；IDEA 2025.2 请使用旧版 0.4.0。
+POST 要求 `Content-Type: application/json` 和 `Accept: application/json, text/event-stream`，请求体上限 1 MiB。0.6.11 针对本地 IDEA 2026.2.3，其他版本、Remote Development 和分离前后端尚未验证；IDEA 2025.2 请使用旧版 0.4.0。
 
 | 问题 | 处理 |
 | --- | --- |
@@ -389,7 +395,7 @@ POST 要求 `Content-Type: application/json` 和 `Accept: application/json, text
 
 ### Overview
 
-Version **0.6.10** targets **IntelliJ IDEA 2026.2.3 (262.10968.63)**, with a compatibility range of `262.10968.63`–`262.*`. It builds and tests with JDK 25 while retaining Java 21 language and bytecode compatibility. The original nineteen tools plus two operation-management tools are retained alongside available official providers: **56 + 21 = 77 tools** in the complete baseline environment. Availability depends on plugins, licensing, disabled tools and router settings.
+Version **0.6.11** targets **IntelliJ IDEA 2026.2.3 (262.10968.63)**, with a compatibility range of `262.10968.63`–`262.*`. It builds and tests with JDK 25 while retaining Java 21 language and bytecode compatibility. The original nineteen tools plus two operation-management tools are retained alongside available official providers: **56 + 21 = 77 tools** in the complete baseline environment. Availability depends on plugins, licensing, disabled tools and router settings.
 
 | Tool | Purpose | Required arguments |
 | --- | --- | --- |
@@ -451,6 +457,12 @@ Version 0.6.9 fixes Codex TOML auto-configuration for both inline `http_headers 
 
 Local 0.6.9 validation passed all thirteen configuration tests, including seven new regression cases, plus packaging and plugin structure verification. The full suite passed 117/119; the two remaining failures are the directory-tree 200 ms optimization-budget assertions already reproduced in 0.6.8. This patch does not change that algorithm or budget.
 
+Version 0.6.11 fixes false ownership conflicts with a versioned semantic connection fingerprint for Codex. Changes to `startup_timeout_sec`, `tool_timeout_sec`, `enabled`, tool policies, comments, line endings, quoting or inline/separate table layout no longer invalidate new registrations. The URL, all request headers and authentication/transport fields remain protected: background refresh does not overwrite manual changes to them or re-enable a disabled connection.
+
+Legacy records retain their original raw-text validation. A matching legacy record migrates automatically without rewriting the client file just for migration. For an already-conflicting legacy record, install 0.6.11 and run **Tools → Java MCP: Auto-Configure Clients**, selecting the original client. Explicit registration re-adopts only an entry whose URL and authentication match the current IDEA connection, preserving its settings. Different connections, deleted or malformed entries and alternative authentication still refuse overwrite; reconcile the current IDEA connection configuration first. Reload the client afterward. Older plugins do not understand the new fingerprints; downgrading requires reconfiguration once the connection matches.
+
+Validation on 2026-10-29 passed all **23 configuration tests**, including ten new cases. The full suite passed **145/147**; the two failures remain the existing directory-tree 200 ms optimization-budget assertions. Packaging and plugin structure verification passed, and editor-persistence classes match the 0.6.10 distribution byte for byte. Installed 0.6.11 authenticated successfully and exposed 87 tools, and Codex directly listed open projects. Both global and project registrations migrated to the new fingerprints without errors. The global entry initially pointed to an obsolete port and needed URL reconciliation before re-adoption; mismatched connection fields remain protected from overwrite.
+
 Native tools work without the official MCP plugin. Added tools need the bundled MCP Server and their Terminal / Shell, Debugger MCP, Database Tools and SQL, VCS, Qodana / Ultimate providers. IDE disabled-tool, router and confirmation settings are respected; brave mode is never enabled automatically. Structured launch argument/environment fields are sanitized in `get_run_configurations` and router results. Official debugger evaluation and object expansion do not inherit native `read_debug_variables`'s no-evaluation guarantee.
 
 Long operations such as `execute_tool`, builds, run configurations, terminal commands, inspection scripts and SQL execution/preview/connection tests immediately return `operationId`. Poll `get_tool_operation`, checking `phase`, `error` and `result.isError`; final `result` preserves the full MCP result. Cancellation is a request. Tool descriptions identify the complete asynchronous set; other official calls have a 20-second wait limit.
@@ -481,7 +493,7 @@ Earlier [0.6.5 installed verification](docs/verification/0.6.5-installed.md) con
 
 Version 0.6.4 follows the [call-tree and Git performance design](docs/design/call-tree-and-git-performance.md): bounded parallel scheduling for 2–4 independent Git roots inside the project, while retaining the current official provider's status commands, parsing, filters, counters, ordering and limits. Cancellation shares the outer 20-second query budget. Single roots, explicit selections, nested/external roots and unsupported cases retain the official path. Binary process reading failed the benefit threshold, and call-tree candidate searches cannot safely be omitted; both remain unchanged. See the [0.6.4 verification](docs/verification/0.6.4-query-performance.md) for full-result comparisons, tail latency and installation limits. The installed [production verification](docs/verification/0.6.4-installed.md) confirms 0.6.4 automatic connection and 77 tools. The complete 14-node tree and 49-entry single-root status match official MCP. Separate-task medians were 561/581 ms and 62/64 ms (idea-java/official); mixed-task Git P95 was 103/69 ms. Both runs are retained. Multi-root sandbox gains do not apply to this single-root project.
 
-1. Build the plugin or use the generated [0.6.10 distribution](build/distributions/idea-symbol-mcp-0.6.10.zip). Build artifacts are not included with the source.
+1. Build the plugin or use the generated [0.6.11 distribution](build/distributions/idea-symbol-mcp-0.6.11.zip). Build artifacts are not included with the source.
 2. Select **Settings → Plugins → gear → Install Plugin from Disk** in IDEA, choose the ZIP and follow any restart prompt.
 3. Open a Java project and run **Tools → Java MCP: Copy Connection Configuration** in the main window. Alternatively, press Shift twice and search for the action.
 4. Add the copied configuration to a Streamable HTTP MCP client. Wait for indexing before index-dependent queries.
@@ -748,7 +760,7 @@ $env:IDEA_MCP_TOKEN = '<YOUR_TOKEN_WITHOUT_BEARER_PREFIX>'
 
 The listener is loopback-only, validates Host / Origin and requires Bearer authentication. It implements a stateless Streamable HTTP subset for `2025-03-26`, `2025-06-18` and `2025-11-25`: `initialize`, initialization notifications, `ping`, `tools/list` and `tools/call`. Responses use JSON; GET / DELETE return 405. There is no SSE push, resource API or protocol-level MCP task API; stdio clients use the separate bridge process. Restart IDs are an application-level tool convention.
 
-POST requires `Content-Type: application/json` and `Accept: application/json, text/event-stream`, with a 1 MiB body limit. Version 0.6.10 targets local IDEA 2026.2.3; other releases, Remote Development and split frontend / backend setups remain unverified. Use the older 0.4.0 release for IDEA 2025.2.
+POST requires `Content-Type: application/json` and `Accept: application/json, text/event-stream`, with a 1 MiB body limit. Version 0.6.11 targets local IDEA 2026.2.3; other releases, Remote Development and split frontend / backend setups remain unverified. Use the older 0.4.0 release for IDEA 2025.2.
 
 | Symptom | Action |
 | --- | --- |

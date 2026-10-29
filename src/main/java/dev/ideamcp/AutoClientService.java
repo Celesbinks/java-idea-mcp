@@ -48,7 +48,7 @@ public final class AutoClientService implements PersistentStateComponent<AutoCli
     public synchronized void register(ClientConfiguration.Target target, ClientConfiguration.Connection connection) throws java.io.IOException {
         String path = target.file().toAbsolutePath().normalize().toString();
         Registration existing = state.clients.stream().filter(r -> r.path.equals(path)).findFirst().orElse(null);
-        var update = ClientConfiguration.update(target, connection, existing == null ? null : existing.digest);
+        var update = ClientConfiguration.register(target, connection, existing == null ? null : existing.digest);
         Registration r = existing == null ? new Registration() : existing;
         r.name = target.name();
         r.path = path;

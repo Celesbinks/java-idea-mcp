@@ -32,6 +32,8 @@ public final class AutoConfigureClientsAction extends DumbAwareAction {
                 message = "Configured " + targets.get(chosen).name() + ". Reload the client to discover tools. This entry will be maintained when the IDE endpoint or token changes.";
             } catch (Exception e) {
                 message = "Client configuration was not updated: " + (e instanceof java.io.IOException ? e.getMessage() : e.getClass().getSimpleName());
+                if (e instanceof java.io.IOException && e.getMessage() != null && e.getMessage().startsWith("CONFIG_CONFLICT:"))
+                    message += "\n\nA matching current URL and authentication can be re-adopted by this action. If they differ, reconcile the connection first; existing settings were not overwritten.";
             }
             String result = message;
             ApplicationManager.getApplication().invokeLater(() -> {

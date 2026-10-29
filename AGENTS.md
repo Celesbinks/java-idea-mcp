@@ -5,7 +5,7 @@
 ## 项目与技术栈
 
 - Java Symbol MCP 是 IntelliJ IDEA 插件，复用正在运行的 IDE 的 Java PSI、项目索引和 Execution API。
-- 当前版本 `0.6.10`；目标为 IDEA `2026.2.3` / `262.10968.63`～`262.*`，Java 21 语言级别和字节码，使用 JDK 25 编译和测试。
+- 当前版本 `0.6.11`；目标为 IDEA `2026.2.3` / `262.10968.63`～`262.*`，Java 21 语言级别和字节码，使用 JDK 25 编译和测试。
 - 使用 Gradle 9.1.0 Wrapper、IntelliJ Platform Gradle Plugin 2.18.1、JUnit 4。
 - 插件 ID：`dev.ideamcp.symbols`；显示名称：`Java Symbol MCP`。
 - 本机 MCP 地址默认为 `http://127.0.0.1:64123/mcp`，使用 Bearer 认证。
@@ -120,7 +120,7 @@
 | 调用链与诊断 | `JavaCallToolsTest` / `DiagnosticsToolsTest`：重载、构造器、Lambda、方法引用、调用分页、错误/警告及未保存修复 |
 | 日志 | `RunLogBufferTest` / `RunLogServiceTest`：游标、截断、UTF-16、标准输出类型、实例隔离、淘汰和监听清理 |
 | 令牌和生命周期 | `TokenPersistenceTest`：重建复用、令牌失效、保存失败、并发退出 |
-| 客户端自动配置 | `ClientConfigurationTest` / `CodexInlineHeadersTest` / `AutoClientServiceTest`：内联/独立请求头、Unicode、原文保留、幂等性、所有权和临时配置中的后台轮换 |
+| 客户端自动配置 | `ClientConfigurationTest` / `CodexInlineHeadersTest` / `ClientOwnershipTest` / `AutoClientServiceTest`：内联/独立请求头、Unicode、原文保留、幂等性、语义所有权、旧摘要迁移、显式重新接管和临时配置中的后台轮换 |
 | 编辑保存与落盘 | `EditorPersistenceTest` / `PlatformOperationServiceTest`：真实提供方、延迟写盘、超过旧 20 秒限制、取消/卸载、路由、编码/BOM、无关未保存文档、并发/磁盘冲突与物理路径一致性 |
 | 运行控制 | `RunControlServiceTest`：真实临时 JVM 的 Run / Debug、超时和事件隔离 |
 | 调试现场与断点 | `DebugServiceTest` / `DebugValueTest`：两台临时 JVM 的会话隔离、暂停令牌、线程/栈/局部变量、三种单步、继续/暂停、断点增删和无求值渲染 |

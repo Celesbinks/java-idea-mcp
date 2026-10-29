@@ -5,6 +5,7 @@ import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
 import dev.ideamcp.protocol.Json;
 import org.tomlj.Toml;
+import org.tomlj.TomlArray;
 import org.tomlj.TomlParseResult;
 import org.tomlj.TomlPosition;
 import org.tomlj.TomlTable;
@@ -82,21 +83,33 @@ public final class ClientConfiguration {
      * expectedDigest null means explicit first registration, only an absent or matching entry is adopted.
      */
     public static Update update(Target target, Connection connection, String expectedDigest) throws IOException {
+        return update(target, connection, expectedDigest, false);
+    }
+
+    /** Only the user's explicit registration may re-adopt a matching connection. */
+    static Update register(Target target, Connection connection, String expectedDigest) throws IOException {
+        return update(target, connection, expectedDigest, true);
+    }
+
+    private static Update update(Target target, Connection connection, String expectedDigest, boolean explicit) throws IOException {
         Path path = target.file().toAbsolutePath().normalize();
         if (Files.isSymbolicLink(path)) throw new IOException("CONFIG_SYMLINK: " + path);
         Files.createDirectories(path.getParent());
         try (FileChannel channel = FileChannel.open(path.resolveSibling(path.getFileName() + ".idea-java.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE); var lock = channel.tryLock()) {
             if (lock == null) throw new IOException("CONFIG_BUSY: " + path);
             String before = Files.exists(path) ? Files.readString(path) : "";
-            String owned = owned(target.format(), before), fingerprint = owned == null ? null : digest(owned);
-            if (expectedDigest != null && !expectedDigest.equals(fingerprint))
+            String owned = owned(target.format(), before), fingerprint = fingerprint(target.format(), before);
+            boolean legacyMatch = expectedDigest != null && !expectedDigest.startsWith("codex-v2:")
+                    && owned != null && expectedDigest.equals(digest(owned));
+            if (expectedDigest != null && !expectedDigest.equals(fingerprint) && !legacyMatch
+                    && !(explicit && owned != null && matches(target.format(), before, connection)))
                 throw new IOException("CONFIG_CONFLICT: managed entry changed in " + path);
             if (expectedDigest == null && owned != null && !matches(target.format(), before, connection))
                 throw new IOException("CONFIG_CONFLICT: idea-java already belongs to another connection in " + path);
             String after = merge(target.format(), before, connection);
             if (!matches(target.format(), after, connection))
                 throw new IOException("CONFIG_FORMAT: unable to update the managed connection safely");
-            String next = digest(Objects.requireNonNull(owned(target.format(), after)));
+            String next = Objects.requireNonNull(fingerprint(target.format(), after));
             if (after.equals(before)) return new Update(next, false);
             Path temp = Files.createTempFile(path.getParent(), ".idea-java-", ".tmp");
             try {
@@ -234,6 +247,45 @@ public final class ClientConfiguration {
         if (e == null) return null;
         if (!e.isJsonObject()) throw new IOException("CONFIG_INVALID: idea-java must be an object");
         return e.toString();
+    }
+
+    private static final Set<String> CODEX_CONNECTION_KEYS = Set.of("url", "http_headers", "type", "command", "args",
+            "env", "cwd", "bearer_token_env_var", "env_http_headers", "http_headers_helper", "oauth");
+
+    /** Own connection/transport values, not client policy, comments or TOML layout. */
+    private static String fingerprint(Format format, String input) throws IOException {
+        if (format != Format.CODEX_TOML) {
+            String value = owned(format, input);
+            return value == null ? null : digest(value);
+        }
+        TomlTable server = entry(parseToml(input));
+        if (server == null) return null;
+        JsonObject connection = new JsonObject();
+        for (String key : new TreeSet<>(CODEX_CONNECTION_KEYS)) {
+            if (server.contains(List.of(key))) connection.add(key, canonicalToml(server.get(List.of(key))));
+        }
+        return "codex-v2:" + digest(connection.toString());
+    }
+
+    private static JsonElement canonicalToml(Object value) {
+        if (value instanceof TomlTable table) {
+            JsonObject result = new JsonObject();
+            for (String key : new TreeSet<>(table.keySet())) result.add(key, canonicalToml(table.get(List.of(key))));
+            JsonObject wrapped = new JsonObject(); wrapped.add("table", result); return wrapped;
+        }
+        if (value instanceof TomlArray array) {
+            JsonArray result = new JsonArray();
+            for (int i = 0; i < array.size(); i++) result.add(canonicalToml(array.get(i)));
+            JsonObject wrapped = new JsonObject(); wrapped.add("array", result); return wrapped;
+        }
+        if (value instanceof String text) return new JsonPrimitive(text);
+        if (value instanceof Boolean bool) return new JsonPrimitive(bool);
+        if (value instanceof Number number) return new JsonPrimitive(number);
+        // TOML temporal values are distinct from strings even if their text matches.
+        JsonObject typed = new JsonObject();
+        typed.addProperty("type", value.getClass().getName());
+        typed.addProperty("value", value.toString());
+        return typed;
     }
 
     private record Section(String name, String text) {

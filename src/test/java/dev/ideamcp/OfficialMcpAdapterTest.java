@@ -433,12 +433,12 @@ public final class OfficialMcpAdapterTest extends JavaCodeInsightFixtureTestCase
                     var watchdog = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
                     watchdog.schedule(child::destroyForcibly, 45, java.util.concurrent.TimeUnit.SECONDS);
                     try (var input = new java.io.BufferedReader(new java.io.InputStreamReader(child.getInputStream(), java.nio.charset.StandardCharsets.UTF_8)); var output = new java.io.PrintWriter(new java.io.OutputStreamWriter(child.getOutputStream(), java.nio.charset.StandardCharsets.UTF_8), true)) {
-                        exchange(input, output, 1, "initialize", object("clientInfo", object("name", "mcp-fixture", "version", "0.6.10"), "capabilities", object("experimentalApi", true)));
+                        exchange(input, output, 1, "initialize", object("clientInfo", object("name", "mcp-fixture", "version", "0.6.11"), "capabilities", object("experimentalApi", true)));
                         output.println(object("method", "initialized"));
                         JsonObject inventory = exchange(input, output, 2, "mcpServerStatus/list", object("serverName", "idea-java", "limit", 10));
                         JsonObject status = inventory.getAsJsonArray("data").get(0).getAsJsonObject();
                         assertEquals(73, status.getAsJsonObject("tools").size());
-                        assertEquals("0.6.10", status.getAsJsonObject("serverInfo").get("version").getAsString());
+                        assertEquals("0.6.11", status.getAsJsonObject("serverInfo").get("version").getAsString());
                         JsonObject started = exchange(input, output, 3, "thread/start", object("cwd", getProject().getBasePath(), "ephemeral", true));
                         String threadId = started.getAsJsonObject("thread").get("id").getAsString();
                         JsonObject result = exchange(input, output, 4, "mcpServer/tool/call", object("server", "idea-java", "threadId", threadId, "tool", "get_project_modules", "arguments", object("projectPath", getProject().getBasePath())));
